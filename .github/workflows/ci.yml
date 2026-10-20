@@ -52,6 +52,7 @@ jobs:
           rustup default "${{ matrix.rust }}"
           rustc -vV
           python -c "import subprocess; info = subprocess.check_output(['rustc', '-vV'], text=True); assert 'host: ${{ matrix.platform.host }}' in info, info"
+          echo "ORT_CACHE_DIR=$RUNNER_TEMP/ort-cache" >> "$GITHUB_ENV"
       - name: Install Linux CPU build prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -59,11 +60,18 @@ jobs:
           sudo apt-get install --yes build-essential pkg-config libssl-dev
       # ort-sys rc.13 has no prebuilt Intel macOS distribution. Build the
       # compatible upstream runtime natively, without enabling a GPU provider.
-      - name: Install Intel macOS CPU build prerequisites
+      - name: Cache Intel macOS ONNX Runtime shared libraries
         if: matrix.platform.host == 'x86_64-apple-darwin'
+        id: ort-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/onnxruntime-build/Release/libonnxruntime*.dylib
+          key: ort-cpu-${{ matrix.platform.runner }}-${{ matrix.platform.host }}-${{ hashFiles('.github/workflows/ci.yml') }}
+      - name: Install Intel macOS CPU build prerequisites
+        if: matrix.platform.host == 'x86_64-apple-darwin' && steps.ort-cache.outputs.cache-hit != 'true'
         run: python -m pip install 'cmake>=3.28,<4' ninja packaging numpy
       - name: Build Intel macOS ONNX Runtime CPU shared library
-        if: matrix.platform.host == 'x86_64-apple-darwin'
+        if: matrix.platform.host == 'x86_64-apple-darwin' && steps.ort-cache.outputs.cache-hit != 'true'
         env:
           ORT_SOURCE: ${{ runner.temp }}/onnxruntime-source
           ORT_BUILD: ${{ runner.temp }}/onnxruntime-build
@@ -71,10 +79,21 @@ jobs:
           git clone --branch v1.28.0 --depth 1 --recursive https://github.com/microsoft/onnxruntime.git "$ORT_SOURCE"
           test "$(git -C "$ORT_SOURCE" rev-parse HEAD)" = da9b5e364c465de65c49d91e696cd6485270757f
           python "$ORT_SOURCE/tools/ci_build/build.py" --build_dir "$ORT_BUILD" --config Release --update --build --build_shared_lib --parallel 3 --skip_tests --cmake_generator Ninja --compile_no_warning_as_error --cmake_extra_defines CMAKE_OSX_ARCHITECTURES=x86_64
+      - name: Configure Intel macOS ONNX Runtime
+        if: matrix.platform.host == 'x86_64-apple-darwin'
+        env:
+          ORT_BUILD: ${{ runner.temp }}/onnxruntime-build
+        run: |
           test -f "$ORT_BUILD/Release/libonnxruntime.dylib"
           echo "ORT_LIB_LOCATION=$ORT_BUILD/Release" >> "$GITHUB_ENV"
           echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
           echo "DYLD_LIBRARY_PATH=$ORT_BUILD/Release" >> "$GITHUB_ENV"
+      - name: Cache Cargo dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Include native build settings as well as the action's automatic Rust/Cargo keys.
+          key: ${{ matrix.platform.runner }}-${{ matrix.rust }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          cache-directories: ${{ runner.temp }}/ort-cache
       - name: Build actual native CLI with CPU backend
         run: cargo build --locked -p anr-cli
       - name: Run workspace and native CLI process tests
