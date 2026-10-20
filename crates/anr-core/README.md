@@ -6,7 +6,7 @@
 
 `anr-core` defines how to call a noise reducer. It does not implement denoising or load models or ONNX Runtime. Use it when your code needs to work with a denoiser but the application should choose the implementation.
 
-Requires **Rust 1.88 or later**. To process audio, you'll also need an implementation such as `anr-ort::DFN3`. If you don't need the interface as a separate dependency, start with the `anr` crate instead.
+Requires the **latest stable Rust toolchain**. To process audio, you'll also need an implementation such as `anr-ort::DFN3`. If you don't need the interface as a separate dependency, start with the `anr` crate instead.
 
 ### Add the dependency
 
@@ -73,7 +73,7 @@ The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT)
 
 `anr-core` 只规定怎样调用降噪器，不提供降噪实现，也不加载模型或 ONNX Runtime。如果你的代码只需要调用降噪器，而由应用决定使用哪种实现，就选这个包。
 
-需要 **Rust 1.88 或更新版本**。要实际处理音频，还需要 `anr-ort::DFN3` 等实现；不需要单独依赖接口时，可以直接使用 `anr` 包。
+需要 **最新 Rust stable 工具链**。要实际处理音频，还需要 `anr-ort::DFN3` 等实现；不需要单独依赖接口时，可以直接使用 `anr` 包。
 
 ### 添加依赖
 

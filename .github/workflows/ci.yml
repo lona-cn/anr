@@ -18,13 +18,12 @@ env:
 
 jobs:
   native-cli:
-    name: ${{ matrix.platform.name }} / Rust ${{ matrix.rust }}
+    name: ${{ matrix.platform.name }} / Rust stable
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, '1.88.0']
         platform:
           - name: Windows x64
             runner: windows-2025
@@ -48,8 +47,8 @@ jobs:
           python-version: '3.12'
       - name: Install native Rust toolchain
         run: |
-          rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
-          rustup default "${{ matrix.rust }}"
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
           rustc -vV
           python -c "import subprocess; info = subprocess.check_output(['rustc', '-vV'], text=True); assert 'host: ${{ matrix.platform.host }}' in info, info"
           echo "ORT_CACHE_DIR=$RUNNER_TEMP/ort-cache" >> "$GITHUB_ENV"
@@ -92,7 +91,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # Include native build settings as well as the action's automatic Rust/Cargo keys.
-          key: ${{ matrix.platform.runner }}-${{ matrix.rust }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: ${{ matrix.platform.runner }}-${{ hashFiles('.github/workflows/ci.yml') }}
           cache-directories: ${{ runner.temp }}/ort-cache
       - name: Build actual native CLI with CPU backend
         run: cargo build --locked -p anr-cli
@@ -101,12 +100,10 @@ jobs:
       - name: Run CLI without inference backend
         run: cargo test --locked -p anr-cli --no-default-features
       - name: Formatting and lint gate
-        if: matrix.rust == 'stable'
         run: |
           cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build workspace documentation
-        if: matrix.rust == 'stable'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --no-deps

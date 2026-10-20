@@ -3,7 +3,6 @@ name = "anr-ort"
 description = "Stateful DeepFilterNet3 audio noise reduction with ONNX Runtime"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 readme = "README.md"
 documentation = "https://docs.rs/anr-ort"

@@ -6,7 +6,7 @@
 
 `anr-cli` installs the `anr` command for denoising audio files, processing batches one file at a time, and reading or writing audio through stdin/stdout. It calls DFN3 / ONNX Runtime through `anr` and handles decoding, band-limited resampling, and multiple channels itself. You don't need FFmpeg or Python to run it.
 
-Building from source requires **Rust 1.88 or later**. You must supply a model explicitly: none is packaged, downloaded automatically, or picked up from a `models/` directory in the checkout. It must have exactly these three inputs and three outputs, all `f32`:
+Building from source requires the **latest stable Rust toolchain**. You must supply a model explicitly: none is packaged, downloaded automatically, or picked up from a `models/` directory in the checkout. It must have exactly these three inputs and three outputs, all `f32`:
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, p
 
 ### What has been tested
 
-CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`). Each uses stable and Rust 1.88 to build and run CLI tests, then installs the CLI and exercises audio processing with a control graph from an unrelated directory. Intel macOS builds CPU ONNX Runtime from source on the runner. A workflow file is not a test result: only a successful job run establishes that platform's result. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`). Each uses the latest stable Rust toolchain to build and run CLI tests, then installs the CLI and exercises audio processing with a control graph from an unrelated directory. Intel macOS builds CPU ONNX Runtime from source on a native-library cache miss. A workflow file is not a test result: only a successful job run establishes that platform's result. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
 
@@ -175,7 +175,7 @@ Dependencies and model weights keep their own licenses. Symphonia uses MPL-2.0; 
 
 `anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3 / ONNX Runtime，自行完成解码、带限重采样和多声道处理。运行时不需要 FFmpeg 或 Python。
 
-从源码构建需要 **Rust 1.88 或更新版本**。模型必须明确提供：不随包分发、不自动下载，也不会自行选用源码目录里的 `models/` 文件。模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
+从源码构建需要 **最新 Rust stable 工具链**。模型必须明确提供：不随包分发、不自动下载，也不会自行选用源码目录里的 `models/` 文件。模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -328,7 +328,7 @@ cargo build -p anr-cli --no-default-features --features ort-load-dynamic
 
 ### 哪些已经测过
 
-CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）、macOS x64（`macos-15-intel`）。每种分别用 stable 和 Rust 1.88 构建并运行 CLI 测试，再安装 CLI，从无关目录用控制图运行音频处理；Intel macOS 在 runner 内从源码构建 CPU ONNX Runtime。配置文件不是运行结果，只有对应 job 实际通过才能记录该平台通过。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）、macOS x64（`macos-15-intel`）。每种使用最新 Rust stable 工具链构建并运行 CLI 测试，再安装 CLI，从无关目录用控制图运行音频处理；Intel macOS 在原生库缓存未命中时从源码构建 CPU ONNX Runtime。配置文件不是运行结果，只有对应 job 实际通过才能记录该平台通过。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
 自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
 

@@ -6,7 +6,7 @@
 
 For most Rust applications, start with `anr`. Enable `ort` to run a DeepFilterNet3 (DFN3) model on **48 kHz, mono `f32` samples**. Input and output have the same length.
 
-The library does not read microphones, decode WAV, or resample audio. You'll need **Rust 1.88 or later** and a model file of your own.
+The library does not read microphones, decode WAV, or resample audio. You'll need the **latest stable Rust toolchain** and a model file of your own.
 
 ### Denoise your first samples
 
@@ -107,7 +107,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 
 在 Rust 程序里给音频降噪，通常使用 `anr` 包。启用 `ort` 后，可以用 DeepFilterNet3（DFN3）模型处理 **48 kHz、单声道的 `f32` 音频采样**，输入输出长度相同。
 
-它不读取麦克风、不解码 WAV，也不转换采样率。需要 **Rust 1.88 或更新版本**，以及自己准备的模型文件。
+它不读取麦克风、不解码 WAV，也不转换采样率。需要 **最新 Rust stable 工具链**，以及自己准备的模型文件。
 
 ### 先完成一次降噪
 

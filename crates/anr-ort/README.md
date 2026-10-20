@@ -6,7 +6,7 @@
 
 `anr-ort` runs a DeepFilterNet3 (DFN3) model with ONNX Runtime on **48 kHz, mono `f32` samples**. It provides `DFN3` to load the model and process audio in chunks.
 
-It does not read microphones, decode audio files, or resample. Requires **Rust 1.88 or later**. Bring your own model: models are not included in the Rust packages or downloaded automatically.
+It does not read microphones, decode audio files, or resample. Requires the **latest stable Rust toolchain**. Bring your own model: models are not included in the Rust packages or downloaded automatically.
 
 ### Denoise your first samples
 
@@ -105,7 +105,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 
 `anr-ort` 用 ONNX Runtime 运行 DeepFilterNet3（DFN3）模型，处理 **48 kHz、单声道的 `f32` 音频采样**。它提供 `DFN3`，供程序加载模型并逐段处理音频。
 
-它不读取麦克风、不解码音频文件，也不转换采样率。需要 **Rust 1.88 或更新版本**。模型由你准备，不随 Rust 包提供，也不会自动下载。
+它不读取麦克风、不解码音频文件，也不转换采样率。需要 **最新 Rust stable 工具链**。模型由你准备，不随 Rust 包提供，也不会自动下载。
 
 ### 先完成一次降噪
 

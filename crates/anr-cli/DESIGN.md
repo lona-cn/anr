@@ -8,7 +8,7 @@
 
 **Architecture:** CLI 通过 `anr` 统一访问降噪器。音频解码、重采样、声道管理、文件输出和管道协议留在 CLI，不塞进 `anr-core` 或 ORT 后端。先采用静态编译的后端选择和内部模块边界，不引入动态插件 ABI。
 
-**Tech Stack:** Rust 2024 / MSRV 1.88；clap、Symphonia、rubato、hound、tempfile；现有 anr / DFN3 / ORT。
+**Tech Stack:** Rust stable / edition 2024；clap、Symphonia、rubato、hound、tempfile；现有 anr / DFN3 / ORT。
 
 **Spec:** 本文件“范围与约束”“命令契约”“音频处理契约”“平台与分发”是实施任务的规格依据。
 
@@ -189,7 +189,7 @@ crates/anr-cli/
 | `serde` / `serde_json` | 1.x | inspect/backends 的结构化输出；不与音频 stdout 混用。 |
 | `ctrlc` | 3.x | Windows / Unix 的主动取消通知，不在信号回调里执行推理或文件提交。 |
 
-这里是已调查 API 的依赖基线，不是要求为所有普通依赖使用精确 `=` 锁定；实施时按项目 MSRV 解析兼容版本、更新 Cargo.lock 并用 1.88 构建验收。ORT 继续遵循 workspace 已有的精确预发布版本约束。
+这里是已调查 API 的依赖基线，不是要求为所有普通依赖使用精确 `=` 锁定；实施时使用 Rust stable 解析兼容版本、更新 Cargo.lock 并构建验收。ORT 继续遵循 workspace 已有的精确预发布版本约束。
 
 Symphonia 的 MPL-2.0 需要单独记录，不能因为项目采用 MIT OR Apache-2.0 就删除依赖自身的许可和来源说明。二进制分发要记录 codec、重采样器、ORT 和模型的独立许可要求，不把未知权重纳入项目授权。
 
@@ -208,7 +208,7 @@ Symphonia 的 MPL-2.0 需要单独记录，不能因为项目采用 MIT OR Apach
 - 编译某个 target 不等于支持该系统；Windows、Linux、macOS 都要原生启动二进制并处理音频。macOS 的两种架构也不能相互代替运行验收。
 - Linux GNU 产物不宣称兼容 musl 或任意旧 glibc；最低 OS / 运行库要求随实际构建基线和运行验证记录。
 - 发布压缩包包含 executable、所需运行库及适用许可说明，模型单独提供。通过 `cargo install anr-cli` 安装时也不能依赖工作区外路径。
-- `.github/workflows/ci.yml` 负责原生 OS 测试和 MSRV 门禁；模型无再分发授权时 CI 使用自制控制图，本地额外运行用户提供的真实模型。
+- `.github/workflows/ci.yml` 仅使用 Rust stable 执行原生 OS 构建与测试；模型无再分发授权时 CI 使用自制控制图，本地额外运行用户提供的真实模型。
 - 发布流程增加 `anr-cli`，顺序为 `anr-core → anr-ort → anr → anr-cli`；所有内部依赖同时带版本与本地路径。
 
 CLI features 与 `anr` 保持同名转发，不维护第二套 provider 绑定：
@@ -233,7 +233,7 @@ ort-xnnpack = ["ort", "anr/ort-xnnpack"]
 
 **文件**：根 `Cargo.toml`、`crates/anr-cli/Cargo.toml`、`src/main.rs`、`src/args.rs`、`src/commands.rs`、`src/engine.rs`、`tests/cli.rs`。
 
-- [x] workspace 增加 CLI 成员和带 `version + path` 的 `anr` 依赖；package 继承版本、MSRV 和双许可，声明 `[[bin]] name = "anr"`。
+- [x] workspace 增加 CLI 成员和带 `version + path` 的 `anr` 依赖；package 继承版本、edition 和双许可，声明 `[[bin]] name = "anr"`。
 - [x] 实现 denoise / inspect / backends 参数和上述互斥规则，定义统一退出码及 stderr 输出。
 - [x] engine 工厂只使用 `anr`，对未编译或无法初始化的显式 provider 报错，不静默回退。
 - [x] 用自制 ONNX 控制图运行真实 raw 输入/输出进程，断言音频值和完整字节数；stdout 不得混入日志。
@@ -268,7 +268,7 @@ ort-xnnpack = ["ort", "anr/ort-xnnpack"]
 
 - [x] README 写清 raw 格式、批处理、provider、模型路径、WAV stdout 限制、模型算法延迟和平台验证边界。
 - [ ] 四个平台的 GitHub 原生 runner 全部执行通过：CI 已配置；本机 Windows / WSL Ubuntu 已实跑，macOS 及 GitHub jobs 需对应环境实际执行，不以本地结果替代。
-- [x] Rust 1.88 完整工作区编译和测试通过；安装到临时目录后，从无关工作目录使用实际 DFN3 模型运行成功。
+- [x] 历史验收曾在 Rust 1.88 完成完整工作区编译和测试；安装到临时目录后，从无关工作目录使用实际 DFN3 模型运行成功。该记录不代表当前支持要求。
 - [x] fmt、默认及无后端 clippy、无后端测试、所有 features 编译检查、无同名冲突的库 Rustdoc 通过。
 - [x] 四个 package 均经 Cargo 内建 staging registry 解包构建验证；CLI 包包含独立许可/通知，不包含用户权重和本机音频。
 - [x] 四 crate workspace publish dry-run 全部通过，明确中止了上传；未实际发布。

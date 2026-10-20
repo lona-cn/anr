@@ -8,7 +8,7 @@
 
 The library takes **48 kHz, mono `f32` samples**. For audio files, resampling, and multiple channels, use [`anr-cli`](crates/anr-cli/README.md). The CLI handles files, batches, and raw PCM streams; it does not provide microphone access, virtual audio devices, or drivers.
 
-You'll need **Rust 1.88 or later** and a compatible ONNX model. Models are not included in the Rust packages or downloaded automatically. A model named “DeepFilterNet3” is not necessarily compatible—check its inputs and outputs below.
+The project supports only the **latest stable Rust toolchain**. You'll also need a compatible ONNX model. Models are not included in the Rust packages or downloaded automatically. A model named “DeepFilterNet3” is not necessarily compatible—check its inputs and outputs below.
 
 ### Denoise a file
 
@@ -26,7 +26,7 @@ Replace the model path with your own. Once installed, `anr` does not need to run
 
 See the [CLI README](crates/anr-cli/README.md) for raw stdin/stdout, how output files are saved, execution providers, model latency, and binary-safe shell examples.
 
-The default build may download ONNX Runtime, so it needs network access and a supported platform toolchain. Intel macOS is not covered by the current default ORT prebuilt distribution. CI is configured for native Windows x64, Linux x64, and macOS arm64/x64, including Rust 1.88 checks; the configuration itself is not evidence that those jobs have passed. See the CLI README for recorded local results and platforms not yet tested.
+The default build may download ONNX Runtime, so it needs network access and a supported platform toolchain. Intel macOS is not covered by the current default ORT prebuilt distribution. CI is configured to use Rust stable on native Windows x64, Linux x64, and macOS arm64/x64; the configuration itself is not evidence that those jobs have passed. See the CLI README for recorded local results and platforms not yet tested.
 
 ### Use the Rust library
 
@@ -150,7 +150,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version changes and [RELEASING.md](RELEASIN
 
 库接口处理 **48 kHz、单声道的 `f32` 采样**。音频文件解码、采样率转换和多声道处理可以交给 [`anr-cli`](crates/anr-cli/README.md)。CLI 用于文件、批处理和 raw PCM 流，不提供麦克风访问、虚拟声卡或驱动。
 
-使用前准备好 **Rust 1.88 或更新版本**，以及符合要求的 ONNX 模型。模型不随 Rust 包提供，也不会自动下载；同样叫 DeepFilterNet3 的模型，输入输出也可能不同，请先核对下文要求。
+项目仅支持 **最新 Rust stable 工具链**。还需准备符合要求的 ONNX 模型。模型不随 Rust 包提供，也不会自动下载；同样叫 DeepFilterNet3 的模型，输入输出也可能不同，请先核对下文要求。
 
 ### 直接处理音频文件
 
@@ -168,7 +168,7 @@ anr backends --json
 
 raw stdin/stdout 的格式、输出文件的保存方式、执行 provider、模型延迟及不会损坏二进制音频的 shell 调用示例，见 [CLI 使用文档](crates/anr-cli/README.md)。
 
-默认构建可能下载 ONNX Runtime，需要网络和目标平台工具链。当前 ORT 默认预编译分发不包含 Intel macOS。CI 配置了原生 Windows x64、Linux x64、macOS arm64/x64 和 Rust 1.88 检查，但配置文件不代表这些任务已经通过；已有本地结果和未实测平台见 CLI 文档。
+默认构建可能下载 ONNX Runtime，需要网络和目标平台工具链。当前 ORT 默认预编译分发不包含 Intel macOS。CI 配置为使用 Rust stable 检查原生 Windows x64、Linux x64、macOS arm64/x64，但配置文件不代表这些任务已经通过；已有本地结果和未实测平台见 CLI 文档。
 
 ### 在 Rust 程序里使用
 
