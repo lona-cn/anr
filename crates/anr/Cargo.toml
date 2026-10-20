@@ -1,0 +1,33 @@
+[package]
+name = "anr"
+description = "Audio noise reduction with a shared interface and optional inference backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/anr"
+keywords = ["audio", "noise-reduction", "denoise", "deepfilternet"]
+categories = ["multimedia::audio"]
+include = ["src/**", "examples/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+anr-ort = { workspace = true, optional = true }
+
+[features]
+default = []
+ort = ["dep:anr-ort"]
+ort-load-dynamic = ["ort", "anr-ort/load-dynamic"]
+ort-cuda = ["ort", "anr-ort/cuda"]
+ort-tensorrt = ["ort", "anr-ort/tensorrt"]
+ort-directml = ["ort", "anr-ort/directml"]
+ort-coreml = ["ort", "anr-ort/coreml"]
+ort-xnnpack = ["ort", "anr-ort/xnnpack"]
+
+[[example]]
+name = "denoise"
+required-features = ["ort"]
+
+[package.metadata.docs.rs]
+features = ["ort-load-dynamic"]

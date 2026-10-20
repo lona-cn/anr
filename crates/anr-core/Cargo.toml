@@ -1,0 +1,12 @@
+[package]
+name = "anr-core"
+description = "Backend-independent streaming audio noise reduction interfaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/anr-core"
+keywords = ["audio", "noise-reduction", "denoise"]
+categories = ["multimedia::audio"]
+include = ["src/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]

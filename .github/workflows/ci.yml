@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  native-cli:
+    name: ${{ matrix.platform.name }} / Rust ${{ matrix.rust }}
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, '1.88.0']
+        platform:
+          - name: Windows x64
+            runner: windows-2025
+            host: x86_64-pc-windows-msvc
+          - name: Linux x64
+            runner: ubuntu-24.04
+            host: x86_64-unknown-linux-gnu
+          - name: macOS arm64
+            runner: macos-15
+            host: aarch64-apple-darwin
+          - name: macOS x64
+            runner: macos-15-intel
+            host: x86_64-apple-darwin
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native Rust toolchain
+        run: |
+          rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
+          rustup default "${{ matrix.rust }}"
+          rustc -vV
+          python -c "import subprocess; info = subprocess.check_output(['rustc', '-vV'], text=True); assert 'host: ${{ matrix.platform.host }}' in info, info"
+      - name: Install Linux CPU build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential pkg-config libssl-dev
+      # ort-sys rc.13 has no prebuilt Intel macOS distribution. Build the
+      # compatible upstream runtime natively, without enabling a GPU provider.
+      - name: Install Intel macOS CPU build prerequisites
+        if: matrix.platform.host == 'x86_64-apple-darwin'
+        run: python -m pip install 'cmake>=3.28,<4' ninja packaging numpy
+      - name: Build Intel macOS ONNX Runtime CPU shared library
+        if: matrix.platform.host == 'x86_64-apple-darwin'
+        env:
+          ORT_SOURCE: ${{ runner.temp }}/onnxruntime-source
+          ORT_BUILD: ${{ runner.temp }}/onnxruntime-build
+        run: |
+          git clone --branch v1.28.0 --depth 1 --recursive https://github.com/microsoft/onnxruntime.git "$ORT_SOURCE"
+          test "$(git -C "$ORT_SOURCE" rev-parse HEAD)" = da9b5e364c465de65c49d91e696cd6485270757f
+          python "$ORT_SOURCE/tools/ci_build/build.py" --build_dir "$ORT_BUILD" --config Release --update --build --build_shared_lib --parallel 3 --skip_tests --cmake_generator Ninja --compile_no_warning_as_error --cmake_extra_defines CMAKE_OSX_ARCHITECTURES=x86_64
+          test -f "$ORT_BUILD/Release/libonnxruntime.dylib"
+          echo "ORT_LIB_LOCATION=$ORT_BUILD/Release" >> "$GITHUB_ENV"
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$ORT_BUILD/Release" >> "$GITHUB_ENV"
+      - name: Build actual native CLI with CPU backend
+        run: cargo build --locked -p anr-cli
+      - name: Run workspace and native CLI process tests
+        run: cargo test --locked --workspace
+      - name: Run CLI without inference backend
+        run: cargo test --locked -p anr-cli --no-default-features
+      - name: Formatting and lint gate
+        if: matrix.rust == 'stable'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Install and run outside source working directory
+        shell: python
+        run: |
+          import json
+          import math
+          import os
+          from pathlib import Path
+          import struct
+          import subprocess
+          import tempfile
+          import wave
+
+          repository = Path.cwd()
+          fixture = repository / "crates/anr-cli/tests/fixtures/control.onnx"
+          assert fixture.is_file(), fixture
+          with tempfile.TemporaryDirectory(prefix="anr-native-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+              scratch = Path(temporary)
+              installation = scratch / "installed"
+              unrelated = scratch / "unrelated working directory"
+              unrelated.mkdir()
+              subprocess.run([
+                  "cargo", "install", "--locked", "--path", str(repository / "crates/anr-cli"),
+                  "--root", str(installation),
+              ], check=True)
+              executable = installation / "bin" / ("anr.exe" if os.name == "nt" else "anr")
+
+              def invoke(*arguments, audio=None):
+                  return subprocess.run(
+                      [str(executable), *arguments], input=audio, stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE, cwd=unrelated, check=True, timeout=60,
+                  )
+
+              invoke("--help")
+              assert "backends" in json.loads(invoke("backends", "--json").stdout)
+              # Native subprocess bytes bypass shell text-pipeline conversion.
+              audio = struct.pack("<960f", *([0.125] * 960))
+              result = invoke(
+                  "denoise", "-", "--input-format", "f32le", "--input-rate", "48000",
+                  "--input-channels", "1", "--output", "-", "--output-format", "f32le",
+                  "--model", str(fixture), "--strength", "100", audio=audio,
+              )
+              assert len(result.stdout) == len(audio), (len(result.stdout), result.stderr)
+              samples = struct.unpack("<960f", result.stdout)
+              assert all(math.isfinite(value) for value in samples)
+              assert all(abs(value - 0.125) < 1e-5 for value in samples[:480])
+              assert all(abs(value - 0.25) < 1e-5 for value in samples[480:])
+
+              source = unrelated / "双声道 input.wav"
+              target = unrelated / "双声道 output.wav"
+              with wave.open(str(source), "wb") as writer:
+                  writer.setnchannels(2)
+                  writer.setsampwidth(2)
+                  writer.setframerate(48000)
+                  writer.writeframes(struct.pack("<960h", *([4096, 0] * 480)))
+              invoke("denoise", str(source), "--output", str(target), "--model", str(fixture))
+              with wave.open(str(target), "rb") as reader:
+                  assert (reader.getframerate(), reader.getnchannels(), reader.getnframes()) == (48000, 2, 480)
+                  assert len(reader.readframes(480)) == 480 * 2 * 2
+              info = json.loads(invoke("inspect", str(target), "--json").stdout)
+              assert info["sample_rate"] == 48000 and info["channels"] == 2

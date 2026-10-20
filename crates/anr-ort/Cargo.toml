@@ -1,0 +1,30 @@
+[package]
+name = "anr-ort"
+description = "Stateful DeepFilterNet3 audio noise reduction with ONNX Runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/anr-ort"
+keywords = ["audio", "noise-reduction", "onnx", "deepfilternet"]
+categories = ["multimedia::audio"]
+include = ["src/**", "tests/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+ort.workspace = true
+
+[features]
+default = ["download-binaries"]
+download-binaries = ["ort/download-binaries", "ort/copy-dylibs", "ort/tls-native"]
+load-dynamic = ["ort/load-dynamic"]
+cuda = ["ort/cuda"]
+tensorrt = ["ort/tensorrt"]
+directml = ["ort/directml"]
+coreml = ["ort/coreml"]
+xnnpack = ["ort/xnnpack"]
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["load-dynamic"]

@@ -1,0 +1,48 @@
+	anr-tests:´
+ 
+states
+state_mean"
+ReduceMean
+%
+input_frame
+frame_mean"
+ReduceMean
+*
+input_frame
+
+frame_mean
+mean_audio"Add
+3
+
+mean_audio
+
+state_meanenhanced_audio_frame"Add
+'
+states
+atten_lim_db
+new_states"Add
+
+atten_lim_dblsnr"Identityanr-state-contract-fixtureZ
+states
+
+
+רבZ
+atten_lim_db
+
+
+Z
+input_frame
+	
+אb
+lsnr
+
+
+b
+
+new_states
+
+
+רבb#
+enhanced_audio_frame
+	
+אB
