@@ -125,6 +125,8 @@ anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynam
 
 Call `anr::ort::initialize_runtime()` before `anr::ort::init().build()` to return dynamic-loading failures instead of entering the lazy loader. The helper does not build an environment; your application owns and configures it. Share that `Environment` across denoisers. `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, one intra-op thread, and no spinning. To choose another provider, use `anr::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
 
+ORT GPU sessions may use CPU kernels for unsupported or CPU-preferred operators. The library preserves the supplied session's operator placement; CLI and benchmark also allow this by default. Explicit provider registration failures remain errors, not an implicit replacement of an unavailable GPU provider with CPU.
+
 ### Compute backends without ORT
 
 Enable `default-features = false, features = ["gles"]` and construct `anr::gles::DFN3::from_file(path)`, or select `gl`, `vk`, `wgpu`, or `dx` with the corresponding module and feature. Each implements `NoiseReduction`, owns a worker thread and GPU-resident weights/state, and waits synchronously for each output. The common fixed plan and WGSL kernels live in `anr-dfn3`; native GL/GLES/Vulkan/D3D12 use Naga-generated GLSL/GLSL ES/SPIR-V/HLSL. No backend substitutes ORT or CPU inference.
@@ -281,6 +283,8 @@ anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynam
 ```
 
 在 `anr::ort::init().build()` 前调用 `anr::ort::initialize_runtime()`，让动态加载失败正常返回，避免进入上游的隐式加载路径。这个函数不创建环境，环境由应用持有和配置，多个降噪实例共享同一个 `Environment`。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以单线程执行算子并禁用忙等待。若要选其他 provider，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+
+ORT GPU Session 可以让不支持或更适合 CPU 的算子使用 CPU kernel。库保留调用方 Session 的算子分配，CLI 和 benchmark 也默认允许这种混合执行。显式 provider 注册失败仍报错，不会把不可用的 GPU provider 隐式换成 CPU。
 
 ### 不使用 ORT 的 Compute 后端
 

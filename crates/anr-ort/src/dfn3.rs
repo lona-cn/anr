@@ -54,6 +54,8 @@ impl DFN3 {
     /// Wraps a configured ORT session and initializes a new stream.
     ///
     /// Configure execution providers on the session before passing it here.
+    /// The wrapper preserves the session's operator placement: unsupported or
+    /// CPU-preferred operators may use CPU kernels alongside a GPU provider.
     /// Tensors are CPU-backed, including when a provider executes on a GPU;
     /// ORT handles the required transfers. Audio/state buffers are allocated
     /// once and the two state buffers alternate without a per-frame state copy.

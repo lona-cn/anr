@@ -103,6 +103,8 @@ Before building an environment, call `anr_ort::initialize_runtime()` to load `OR
 
 `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, use `anr_ort::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
 
+GPU sessions normally retain ORT's per-operator CPU placement: unsupported or CPU-preferred operators may run on CPU alongside the selected GPU provider. `DFN3::new(session)` preserves the session's settings rather than requiring GPU-only execution. The CLI and benchmark use this as their default policy while treating explicit provider registration failures as errors.
+
 In the facade, `ort-directml` compiles support for ORT's DirectML provider; `dx` exposes the separate native D3D12 implementation. Similarly, `gl`, `gles`, `vk`, and `wgpu` are features of the facade, not features of `anr-ort`. Use [`anr-cli`](../anr-cli/README.md) for file decoding, resampling, per-channel processing, and explicit backend/provider selection.
 
 ### License
@@ -211,6 +213,8 @@ anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynam
 `cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` 编入对应库的支持，不会自动选择设备，也不会安装驱动或其他必需的库。
 
 `DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，用 `anr_ort::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+
+GPU Session 默认保留 ORT 按算子分配到 CPU 的行为，不支持或更适合 CPU 的算子可以与所选 GPU provider 混合执行。`DFN3::new(session)` 保留 Session 设置，不要求全部算子都在 GPU 上运行。CLI 和 benchmark 使用这一默认策略，但显式 provider 注册失败仍报错。
 
 facade 的 `ort-directml` 编入 ORT DirectML provider 支持，`dx` 提供另一套原生 D3D12 实现。`gl`、`gles`、`vk`、`wgpu` 同样属于 facade，不是 `anr-ort` 的 features。文件解码、重采样、按声道处理及明确的后端/provider 选择，见 [`anr-cli`](../anr-cli/README.md)。
 

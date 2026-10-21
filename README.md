@@ -160,6 +160,8 @@ The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default
 
 Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, use `anr::ort::session::Session::builder(&environment)` and pass the resulting session to `DFN3::new(session)`.
 
+The project's default ORT policy allows per-operator CPU execution alongside a GPU provider. CLI and benchmark keep ORT's normal placement rules for unsupported or CPU-preferred operators; this is not a temporary benchmark option. `DFN3::new(session)` preserves the supplied session's policy. A requested provider must still register successfully: missing GPU libraries or provider initialization failures remain errors. Native GL/GLES/Vulkan/wgpu/D3D12 implementations are unchanged and do not gain a CPU executor.
+
 ### Compute backends without ONNX Runtime
 
 Build the CLI with `cargo build -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx`, then select `--backend gl`, `gles`, `vk`, `wgpu`, or `dx`. You can enable any subset. Do not pass an ORT `--provider`. The default CLI build, backend, and application release ZIPs remain ORT.
@@ -202,6 +204,35 @@ Initialization failures return errors rather than falling back to CPU. All five 
 
 Set `ANR_DFN3_MODEL` to the absolute model path and run `cargo test -p anr-gl -p anr-gles -p anr-vk -p anr-wgpu -p anr-dx -- --include-ignored --nocapture` on hardware supporting the selected packages. The reference covers strength changes, a partial final frame, reset, thread moves, and invalid-input state preservation. `tools/generate_gl_reference.py` regenerates all five fixtures using development-only `onnx==1.19.1` and `numpy==2.2.6`, not ONNX Runtime.
 
+### Benchmark native compute and ORT GPU inference
+
+`anr-bench` is a workspace-only tool. Its default build tests native compute without an ONNX Runtime dependency. Run from the repository root:
+
+```sh
+cargo run --release -p anr-bench -- --model models/dfn3.onnx --warmup 100 --frames 1000
+cargo run --release -p anr-bench -- --backend vk,dx --json
+```
+
+By default it tests `gl,vk,dx` sequentially, warming up each backend for 100 frames and measuring 1,000 frames at strength 80. Use `--backend gl,vk` on Linux; D3D12 is Windows-only. `--backend` also accepts repeated flags and preserves their order. `--model` defaults to `models/dfn3.onnx`; `--warmup 0` is allowed, `--frames` must be positive, and `--strength` must be finite and within 0–100.
+
+Optional `ort-cuda`, `ort-tensorrt`, and `ort-directml` features add identically named `--backend` choices. They are not added to the default backend list. DirectML requires Windows. Select a runtime source as well: `ort-download-binaries` uses the pinned prebuilt distribution, while `ort-load-dynamic` loads an API-27-compatible library file through `ORT_DYLIB_PATH`.
+
+```sh
+cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml -- --backend ort-cuda,ort-tensorrt,ort-directml --json
+```
+
+For a supplied shared runtime, set `ORT_DYLIB_PATH` before launch, replace `ort-download-binaries` with `ort-load-dynamic`, and use a separate target directory such as `target/benchmark-ort-dynamic`. GPU features do not install CUDA, cuDNN, TensorRT, or drivers. The pinned GPU distribution uses CUDA 13. Keep provider DLLs matched to the core runtime: reusing a target directory containing 1.28 provider DLLs with the 1.31 core caused a CUDA access violation during verification. A fresh target directory avoids changing other applications' cached files. A supplied runtime must include the requested providers; they are not necessarily all present in one runtime build.
+
+ORT uses one environment across all selected backends, including after a session fails. Each session explicitly registers only the requested provider with registration errors enabled, disables environment providers and thread-pool spinning, and uses sequential execution with one intra-op thread. DirectML also disables memory patterns. Normal ORT placement may run individual operators on CPU; TensorRT does not silently add CUDA as a second provider.
+
+**Current model compatibility:** with matching ORT 1.31 libraries on Windows / RTX 2080 Ti, the repository's DFN3 export runs with DirectML and normal CPU operator placement. CUDA rejects the `FusedConv(Sigmoid)` already present in the original model; disabling graph fusion cannot unfold it. TensorRT reports a missing intermediate shape for `/SequenceAt_11_output_0`. These two initialization failures remain errors, not performance numbers. All three ORT measurement paths also passed a separate self-authored control-graph smoke test. The opt-in hardware regression is `cargo test --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml --test ort -- --ignored`.
+
+Every backend receives the same one-second, fixed-seed mixture of 220 Hz / 880 Hz sine waves and noise, looped as a continuous 48 kHz mono stream in 480-sample frames. Input generation, model loading, shader compilation, warmup, result sorting, and reporting are outside the measured loop. Initialization is reported separately. Warmup state and input position are retained; there is no per-frame reset or benchmark-side allocation in the timed loop.
+
+The table reports initialization, min/mean/max synchronous call latency, nearest-rank P50/P95/P99, frames per second, RTF, and frames taking **more than** the 10 ms audio budget. Latency includes backend execution, any CPU-assigned operators, and host/device transfers, not just GPU kernel time. Native compute keeps recurrent state on GPU; the existing ORT adapter uses CPU-backed audio/state tensors, so its required transfers are measured too. FPS and `rtf` use the complete measured loop's wall time, including timing/bookkeeping overhead; `rtf = wall_seconds / audio_seconds`, so values below 1 are faster than real time.
+
+`--json` writes configuration, input seed, platform/build information, effective backend strength, timings, and `results[].status` (`ok` or `error`) to stdout; progress and debug-build warnings go to stderr. Successful results include `cpu_fallback_allowed`: true for ORT and false for native compute. It describes the execution policy, not an operator count or a claim that all work ran on GPU. Strength follows the backend's existing attenuation rounding. A backend failure does not prevent later backends from running, but any failure produces exit code 1; invalid arguments produce exit code 2. Provider registration errors do not silently replace the requested provider with CPU. Device selection remains each crate's own default, so multiple-GPU machines must not assume every API chose the same adapter. Synthetic-input results are not sound-quality or representative-recording measurements.
+
 ### Which crate should I use?
 
 Use `anr` in most Rust applications, or install `anr-cli` to work with files. Backend crates separate each implementation from the common interface.
@@ -218,6 +249,7 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 | `anr-dx` | Native Windows Direct3D 12 compute DFN3, without ORT, DirectML, or wgpu. |
 | `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
+| `anr-bench` | Workspace-only streaming inference benchmark for native `gl`/`vk`/`dx` and optional ORT CUDA/TensorRT/DirectML, with table or JSON output; not included in application release ZIPs. |
 
 `anr-dfn3` and the five compute crates use this root README in their source packages. `anr-core`, `anr-ort`, the facade, and the CLI each have their own README. The compute constructor takes only a model path; an ORT environment or `Session` is never passed to it.
 
@@ -407,6 +439,8 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 
 创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
 
+项目的 ORT 默认策略允许 GPU provider 与 CPU 算子混合执行。CLI 和 benchmark 保留 ORT 对不支持或更适合 CPU 的算子的正常分配，不是 benchmark 的临时选项；`DFN3::new(session)` 保留调用方 Session 的策略。请求的 provider 仍须成功注册，缺少 GPU 库或 provider 初始化失败仍报错。原生 GL/GLES/Vulkan/wgpu/D3D12 实现不变，不因此新增 CPU 执行器。
+
 ### 不依赖 ONNX Runtime 的 Compute 后端
 
 CLI 使用 `cargo build -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx` 构建，也可只启用其中部分；运行时明确传 `--backend gl`、`gles`、`vk`、`wgpu` 或 `dx`，不要传 ORT 的 `--provider`。CLI 默认构建、默认后端和应用 Release ZIP 仍使用 ORT。
@@ -443,6 +477,35 @@ FFT、特征归一化、卷积、分组线性层、五个 GRU、频谱滤波和 
 
 将 `ANR_DFN3_MODEL` 设为模型绝对路径后，运行 `cargo test -p anr-gl -p anr-gles -p anr-vk -p anr-wgpu -p anr-dx -- --include-ignored --nocapture`，按实际硬件选择包。数值回归覆盖强度切换、最后不足一帧、reset、跨线程移交和无效输入不改变状态。`tools/generate_gl_reference.py` 使用开发依赖 `onnx==1.19.1`、`numpy==2.2.6` 一次生成五份基准，不使用 ONNX Runtime。
 
+### 测试原生 Compute 和 ORT GPU 推理性能
+
+`anr-bench` 是工作区内的独立 benchmark，默认构建只测试原生 Compute，不依赖 ONNX Runtime。在仓库根目录运行：
+
+```sh
+cargo run --release -p anr-bench -- --model models/dfn3.onnx --warmup 100 --frames 1000
+cargo run --release -p anr-bench -- --backend vk,dx --json
+```
+
+默认按 `gl,vk,dx` 顺序串行测试，每个后端预热 100 帧、正式测量 1000 帧，降噪强度为 80。Linux 使用 `--backend gl,vk`，D3D12 仅支持 Windows。`--backend` 可重复指定并保留顺序；`--model` 默认为 `models/dfn3.onnx`。允许 `--warmup 0`，`--frames` 必须大于零，`--strength` 必须是 0–100 的有限数值。
+
+可选的 `ort-cuda`、`ort-tensorrt`、`ort-directml` features 增加同名的 `--backend` 选项，不改变默认后端列表。DirectML 仅支持 Windows。还需选择运行库来源：`ort-download-binaries` 使用固定版本的预编译分发，`ort-load-dynamic` 通过 `ORT_DYLIB_PATH` 加载兼容 API 27 的共享库文件。
+
+```sh
+cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml -- --backend ort-cuda,ort-tensorrt,ort-directml --json
+```
+
+使用自备共享库时，在启动前设置 `ORT_DYLIB_PATH`，将 `ort-download-binaries` 替换为 `ort-load-dynamic`，并使用另一构建目录，如 `target/benchmark-ort-dynamic`。GPU features 不会安装 CUDA、cuDNN、TensorRT 或驱动；当前预编译 GPU 分发使用 CUDA 13。provider DLL 必须与 ORT 核心版本匹配：验收中，共享构建目录残留的 1.28 provider DLL 与 1.31 核心混用曾导致 CUDA 访问冲突。使用新构建目录可避免改动其他应用的缓存文件。自备运行库也必须实际包含请求的 provider，同一运行库不一定支持全部三种。
+
+所有 ORT 后端共用一个 Environment，某个 Session 失败后也保留它。每个 Session 只显式注册指定 provider，注册失败即报错；禁用环境默认 provider 和线程池忙等待，使用单线程顺序执行。DirectML 另关闭 memory pattern。ORT 可以按正常规则将部分算子分配到 CPU；TensorRT 不会静默追加 CUDA provider。
+
+**当前模型兼容性：** 在 Windows / RTX 2080 Ti 和版本一致的 ORT 1.31 运行库上，仓库 DFN3 导出图已通过 DirectML 与正常 CPU 算子分配实跑。CUDA 不支持原始模型中已有的 `FusedConv(Sigmoid)`，关闭图融合也不能将其展开；TensorRT 报告 `/SequenceAt_11_output_0` 缺少中间张量 shape。这两项初始化失败仍返回错误，不生成性能数字。三个 ORT 测量路径另已通过自行编写的控制图验收。硬件回归需手动运行 `cargo test --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml --test ort -- --ignored`。
+
+所有后端共用固定种子生成的 1 秒合成音频，包含 220 Hz、880 Hz 正弦波与噪声，以 48 kHz 单声道、每帧 480 个采样连续循环。输入生成、模型读取、shader 编译、ORT Session 构建、预热、统计排序和报告输出不计入正式测量；初始化耗时单独列出。预热后保留模型状态与输入位置，不逐帧 reset，计时循环不由 benchmark 分配内存。
+
+表格包含初始化耗时、同步 `run` 的最小/平均/最大延迟、nearest-rank P50/P95/P99、FPS、RTF，以及**超过** 10 ms 音频时长的帧数。单帧延迟包含后端执行、分配到 CPU 的算子和主机/设备间的数据传输，不是纯 GPU kernel 耗时。原生 Compute 的状态常驻 GPU；现有 ORT 适配器使用 CPU 上的音频和状态张量，因此所需传输也计入耗时。FPS 与 `rtf` 使用正式循环的实际总耗时，包含计时和统计记录开销；`rtf = 实际耗时 / 音频时长`，小于 1 表示快于实时。
+
+`--json` 将配置、输入种子、平台/构建信息、后端实际强度、耗时及 `results[].status`（`ok` 或 `error`）写入 stdout，进度与 debug 构建警告写入 stderr。成功结果的 `cpu_fallback_allowed` 在 ORT 下为 true、原生 Compute 下为 false，只说明执行策略，不统计算子数量，也不表示所有工作都在 GPU 上完成。强度沿用后端现有的衰减量取整规则。某个后端失败仍继续测试后续后端，但最终退出码为 1；参数错误返回 2。provider 注册失败不会静默换成 CPU。设备仍由各 crate 按现有规则选择，多 GPU 机器不能假定三种 API 选中了同一块卡。合成输入结果不代表音质或真实录音的性能。
+
 ### 各个包怎么选
 
 Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各后端包将具体实现与公共接口分开。
@@ -459,6 +522,7 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 | `anr-dx` | 使用原生 Windows Direct3D 12 Compute DFN3，不依赖 ORT、DirectML 或 wgpu。 |
 | `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
+| `anr-bench` | 工作区内的原生 `gl`/`vk`/`dx` 和可选 ORT CUDA/TensorRT/DirectML 连续帧推理 benchmark，输出表格或 JSON；不包含在应用 Release ZIP 中。 |
 
 `anr-dfn3` 和五个 Compute crate 在源码包中复用本根 README；`anr-core`、`anr-ort`、facade 和 CLI 各有独立 README。Compute 构造器只传模型路径，不接收 ORT 的环境或 `Session`。
 

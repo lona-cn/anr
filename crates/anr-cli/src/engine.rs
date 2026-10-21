@@ -279,11 +279,8 @@ fn load_ort_model(
             if provider == Provider::Directml {
                 builder = builder.with_memory_pattern(false)?;
             }
-            // Explicit GPU requests must not silently execute the graph on CPU.
-            // XNNPACK is itself a CPU provider, with CPU kernels for other ops.
-            if provider != Provider::Xnnpack {
-                builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "1")?;
-            }
+            // Keep ORT's per-operator CPU placement for unsupported or preferred ops.
+            // A requested provider must still register successfully.
             builder
                 .with_execution_providers([dispatch(provider)
                     .map_err(|e| anr::ort::Error::new(e.to_string()))?

@@ -17,7 +17,7 @@
 - 包名 `anr-cli`，二进制名 `anr`；命令行参数通过 `PathBuf` / `OsString` 处理路径，不要求路径可转换为 UTF-8。
 - 保持项目代码 `MIT OR Apache-2.0`，模型文件不嵌入、不打包、不自动下载。
 - 首个实现通过 `anr` 使用现有 ORT DFN3；不绕开统一入口直接依赖 `anr-ort`。
-- CPU 是三平台共同的默认执行方式；GPU provider 是显式选择、按 feature 构建的能力，不自动切换或静默退回 CPU。
+- CPU 是三平台共同的默认执行方式；GPU provider 显式选择、按 feature 构建。ORT 默认允许不支持或更适合 CPU 的算子使用 CPU kernel；provider 注册或初始化失败仍报错，不把不可用的 provider 静默换成 CPU。
 - 文件、管道共用同一条有界缓冲处理管线；内存随声道数、解码包和固定处理缓冲区增长，不随录音时长累积。
 - 不将 FFmpeg 或 Python 作为安装和运行的必需项；可以通过 raw PCM 管道与它们配合。
 - 不承诺实时音频、虚拟声卡、云端服务、动态插件、自动模型搜索和模型下载。

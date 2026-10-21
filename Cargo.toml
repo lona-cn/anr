@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/anr-core", "crates/anr-ort", "crates/anr-dfn3", "crates/anr-gl", "crates/anr-gles", "crates/anr-vk", "crates/anr-wgpu", "crates/anr-dx", "crates/anr", "crates/anr-cli"]
+members = ["crates/anr-core", "crates/anr-ort", "crates/anr-dfn3", "crates/anr-gl", "crates/anr-gles", "crates/anr-vk", "crates/anr-wgpu", "crates/anr-dx", "crates/anr", "crates/anr-cli", "crates/anr-bench"]
 exclude = ["vox-noise-reduction"]
 
 [workspace.package]

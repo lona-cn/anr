@@ -1,0 +1,28 @@
+[package]
+name = "anr-bench"
+description = "Streaming DFN3 inference benchmark for native compute and ONNX Runtime GPU providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anr-core.workspace = true
+anr-dfn3.workspace = true
+anr-gl.workspace = true
+anr-vk.workspace = true
+anr-dx.workspace = true
+anr-ort = { workspace = true, optional = true }
+anyhow = "1.0"
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = []
+ort = ["dep:anr-ort"]
+ort-download-binaries = ["ort", "anr-ort/download-binaries"]
+ort-load-dynamic = ["ort", "anr-ort/load-dynamic"]
+ort-cuda = ["ort", "anr-ort/cuda"]
+ort-tensorrt = ["ort", "anr-ort/tensorrt"]
+ort-directml = ["ort", "anr-ort/directml"]
