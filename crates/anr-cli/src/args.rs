@@ -65,10 +65,14 @@ pub struct DenoiseArgs {
     pub output_dir: Option<PathBuf>,
     #[arg(long, value_name = "ONNX")]
     pub model: PathBuf,
-    #[arg(long, default_value = "ort", value_parser = ["ort"])]
-    pub backend: String,
-    #[arg(long, value_enum, default_value_t = Provider::Cpu)]
-    pub provider: Provider,
+    #[arg(long, value_enum, default_value_t = Backend::Ort)]
+    pub backend: Backend,
+    #[arg(
+        long,
+        value_enum,
+        help = "ORT 执行 provider，ORT 默认 cpu；不能与 --backend gl 同用"
+    )]
+    pub provider: Option<Provider>,
     #[arg(long, default_value_t = 80.0, value_parser = strength, allow_hyphen_values = true)]
     pub strength: f32,
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
@@ -103,6 +107,21 @@ pub enum WavFormat {
     Pcm24,
     Float32,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Backend {
+    Ort,
+    Gl,
+}
+
+impl Backend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ort => "ort",
+            Self::Gl => "gl",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Provider {
     Cpu,
@@ -148,6 +167,11 @@ impl Provider {
 impl DenoiseArgs {
     pub fn validate(&self) -> Result<(), clap::Error> {
         let invalid = |message| clap::Error::raw(ErrorKind::ArgumentConflict, message);
+        if self.backend == Backend::Gl && self.provider.is_some() {
+            return Err(invalid(
+                "--provider 只适用于 ORT，不能与 --backend gl 同用。",
+            ));
+        }
         let stdin = self.inputs.iter().any(|p| p == Path::new("-"));
         if self.inputs.len() > 1 && self.output.is_some() {
             return Err(invalid("多个输入必须使用 --output-dir，不能共用一个输出。"));

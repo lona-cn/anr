@@ -30,6 +30,7 @@ tempfile = "3.27"
 [features]
 default = ["ort-download-binaries"]
 ort = ["anr/ort"]
+gl = ["anr/gl"]
 ort-download-binaries = ["ort", "anr/ort-download-binaries"]
 ort-load-dynamic = ["ort", "anr/ort-load-dynamic"]
 ort-cuda = ["ort", "anr/ort-cuda"]

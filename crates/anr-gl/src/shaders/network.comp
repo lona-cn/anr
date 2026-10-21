@@ -1,0 +1,167 @@
+#version 430 core
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Weights { float weights[]; };
+layout(std430, binding = 1) readonly buffer StateIn { float state_in[]; };
+layout(std430, binding = 2) buffer StateOut { float state_out[]; };
+layout(std430, binding = 3) buffer Scratch { float scratch[]; };
+uniform uint p[32];
+shared float gru_input[256];
+shared float gru_old_state[256];
+
+// Modes: 0 convolution, 1 transposed convolution, 2 grouped linear,
+// 3 residual add, 4 NCHW/NHWC reorder, 5 ONNX GRU, 6 canonical DF output.
+// Common: p[1]=element count, p[2]=input, p[3]=output, p[4]=weights/input B.
+// Conv: p[5]=bias or UINT_MAX; p[6..11]=Cin,Hin,Win,Cout,Hout,Wout;
+// p[12..18]=Kh,Kw,Sh,Sw,Ph,Pw,groups; p[19]=activation.
+float sigmoid(float x) {
+    return 1.0 / (1.0 + exp(-x));
+}
+
+float activate(float x, uint kind) {
+    if (kind == 1u) return max(x, 0.0);
+    if (kind == 2u) return sigmoid(x);
+    if (kind == 3u) return tanh(x);
+    return x;
+}
+
+void convolution(uint index, bool transposed) {
+    uint ow = index % p[11];
+    uint oh = (index / p[11]) % p[10];
+    uint oc = index / (p[11] * p[10]);
+    uint inputs_per_group = p[6] / p[18];
+    uint outputs_per_group = p[9] / p[18];
+    uint group = oc / outputs_per_group;
+    float sum = p[5] == 0xffffffffu ? 0.0 : weights[p[5] + oc];
+    for (uint ic = 0u; ic < inputs_per_group; ++ic) {
+        uint input_channel = group * inputs_per_group + ic;
+        for (uint kh = 0u; kh < p[12]; ++kh) {
+            int iy;
+            if (transposed) {
+                int t = int(oh) + int(p[16]) - int(kh);
+                if (t < 0 || t % int(p[14]) != 0) continue;
+                iy = t / int(p[14]);
+            } else {
+                iy = int(oh * p[14] + kh) - int(p[16]);
+            }
+            if (iy < 0 || iy >= int(p[7])) continue;
+            for (uint kw = 0u; kw < p[13]; ++kw) {
+                int ix;
+                if (transposed) {
+                    int t = int(ow) + int(p[17]) - int(kw);
+                    if (t < 0 || t % int(p[15]) != 0) continue;
+                    ix = t / int(p[15]);
+                } else {
+                    ix = int(ow * p[15] + kw) - int(p[17]);
+                }
+                if (ix < 0 || ix >= int(p[8])) continue;
+                uint wi;
+                if (transposed) {
+                    // ONNX ConvTranspose is [Cin,Cout/groups,Kh,Kw].
+                    wi = ((input_channel * outputs_per_group + oc % outputs_per_group)
+                        * p[12] + kh) * p[13] + kw;
+                } else {
+                    // ONNX Conv is [Cout,Cin/groups,Kh,Kw].
+                    wi = ((oc * inputs_per_group + ic) * p[12] + kh) * p[13] + kw;
+                }
+                uint si = (input_channel * p[7] + uint(iy)) * p[8] + uint(ix);
+                sum += scratch[p[2] + si] * weights[p[4] + wi];
+            }
+        }
+    }
+    scratch[p[3] + index] = activate(sum, p[19]);
+}
+
+void grouped_linear(uint index) {
+    // Weights retain the exported Einsum layout [group,input,output].
+    uint group = index / p[8];
+    uint output_in_group = index % p[8];
+    float sum = 0.0;
+    for (uint i = 0u; i < p[7]; ++i) {
+        uint wi = (group * p[7] + i) * p[8] + output_in_group;
+        sum += scratch[p[2] + group * p[7] + i] * weights[p[4] + wi];
+    }
+    scratch[p[3] + index] = activate(sum, p[19]);
+}
+
+void reorder(uint index) {
+    uint source;
+    if (p[8] == 0u) {
+        // Destination is flattened NHWC; the singleton batch is implicit.
+        uint channel = index % p[6];
+        uint spatial = index / p[6];
+        source = channel * p[7] + spatial;
+    } else {
+        uint channel = index / p[7];
+        uint spatial = index % p[7];
+        source = spatial * p[6] + channel;
+    }
+    scratch[p[3] + index] = scratch[p[2] + source];
+}
+
+void gru(uint index) {
+    // Every lane participates in loading and the barrier, even if a future
+    // dispatch rounds its output count up to a whole workgroup.
+    uint lane = gl_LocalInvocationID.x;
+    for (uint round = 0u; round < 4u; ++round) {
+        uint k = lane + round * 64u;
+        gru_input[k] = scratch[p[2] + k];
+        gru_old_state[k] = state_in[p[8] + k];
+    }
+    memoryBarrierShared();
+    barrier();
+    if (index >= p[1]) return;
+
+    // p[4]=packed [k][Wz,Wr,Wh,Rz,Rr,Rh][j], p[10]=original B,
+    // p[8]=state segment. Export is ONNX z,r,h with linear_before_reset=1.
+    float wz = weights[p[10] + index];
+    float wr = weights[p[10] + 256u + index];
+    float wh = weights[p[10] + 512u + index];
+    float rz = weights[p[10] + 768u + index];
+    float rr = weights[p[10] + 1024u + index];
+    float rh = weights[p[10] + 1280u + index];
+    for (uint k = 0u; k < 256u; ++k) {
+        uint base = p[4] + k * 1536u + index;
+        float x = gru_input[k];
+        float old = gru_old_state[k];
+        wz += x * weights[base];
+        wr += x * weights[base + 256u];
+        wh += x * weights[base + 512u];
+        rz += old * weights[base + 768u];
+        rr += old * weights[base + 1024u];
+        rh += old * weights[base + 1280u];
+    }
+    float z = sigmoid(wz + rz);
+    float r = sigmoid(wr + rr);
+    float candidate = tanh(wh + r * rh);
+    float value = (1.0 - z) * candidate + z * gru_old_state[index];
+    scratch[p[3] + index] = value;
+    state_out[p[8] + index] = value;
+}
+
+void coefficients(uint index) {
+    // FC is [96,10] after reshape; temporal Conv is [10,1,96].
+    // The parent DSP consumes [5,96,2] (tap,frequency,real/imag).
+    uint component = index % 2u;
+    uint frequency = (index / 2u) % 96u;
+    uint tap = index / 192u;
+    uint channel = tap * 2u + component;
+    scratch[p[3] + index] = scratch[p[2] + frequency * 10u + channel]
+        + scratch[p[4] + channel * 96u + frequency];
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    // This uniform branch must precede the per-lane bounds check: no lane
+    // may return before the shared-memory barrier inside the GRU primitive.
+    if (p[0] == 5u) {
+        gru(index);
+        return;
+    }
+    if (index >= p[1]) return;
+    if (p[0] == 0u) convolution(index, false);
+    else if (p[0] == 1u) convolution(index, true);
+    else if (p[0] == 2u) grouped_linear(index);
+    else if (p[0] == 3u) scratch[p[3] + index] = scratch[p[2] + index] + scratch[p[4] + index];
+    else if (p[0] == 4u) reorder(index);
+    else if (p[0] == 6u) coefficients(index);
+}

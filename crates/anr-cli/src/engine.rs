@@ -1,6 +1,6 @@
-use crate::args::Provider;
+use crate::args::{Backend, Provider};
 use anr::NoiseReduction;
-#[cfg(feature = "ort")]
+#[cfg(any(feature = "ort", feature = "gl"))]
 use anyhow::Context;
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -14,46 +14,113 @@ pub struct EngineSpec {
 
 pub struct EnginePool {
     model: PathBuf,
-    provider: Provider,
     strength: f32,
     spec: EngineSpec,
     reducers: Vec<Box<dyn NoiseReduction>>,
+    resources: BackendResources,
+}
+
+enum BackendResources {
     #[cfg(feature = "ort")]
-    environment: anr::ort::environment::Environment,
+    Ort {
+        environment: anr::ort::environment::Environment,
+        provider: Provider,
+    },
+    #[cfg(feature = "gl")]
+    Gl,
+}
+
+impl BackendResources {
+    fn new(backend: Backend, provider: Option<Provider>) -> Result<(Self, EngineSpec)> {
+        match backend {
+            Backend::Ort => {
+                let provider = provider.unwrap_or(Provider::Cpu);
+                if !provider.compiled() {
+                    bail!(
+                        "provider {} 未编译或不支持当前平台；请查看 anr backends，并启用对应 ort feature",
+                        provider.name()
+                    );
+                }
+                #[cfg(feature = "ort")]
+                {
+                    anr::ort::initialize_runtime().context("无法初始化 ONNX Runtime")?;
+                    let environment = anr::ort::init()
+                        .build()
+                        .context("无法创建 ONNX Runtime 环境")?;
+                    Ok((
+                        Self::Ort {
+                            environment,
+                            provider,
+                        },
+                        EngineSpec {
+                            sample_rate: anr::ort::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::ort::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "ort"))]
+                bail!("此程序未启用 ORT 后端；请以 ort feature 重新构建")
+            }
+            Backend::Gl => {
+                if provider.is_some() {
+                    bail!("--provider 只适用于 ORT，不能与 --backend gl 同用");
+                }
+                #[cfg(feature = "gl")]
+                {
+                    Ok((
+                        Self::Gl,
+                        EngineSpec {
+                            sample_rate: anr::gl::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::gl::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "gl"))]
+                bail!("此程序未启用 GL 后端；请以 gl feature 重新构建")
+            }
+        }
+    }
+
+    fn load(&self, model: &Path, strength: f32) -> Result<Box<dyn NoiseReduction>> {
+        #[cfg(any(feature = "ort", feature = "gl"))]
+        match self {
+            #[cfg(feature = "ort")]
+            Self::Ort {
+                environment,
+                provider,
+            } => load_ort_model(environment, model, *provider, strength),
+            #[cfg(feature = "gl")]
+            Self::Gl => {
+                let mut reducer = anr::gl::DFN3::from_file(model)
+                    .with_context(|| format!("无法以 GL 后端加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+        }
+        #[cfg(not(any(feature = "ort", feature = "gl")))]
+        {
+            let _ = (model, strength);
+            match *self {}
+        }
+    }
 }
 
 impl EnginePool {
-    pub fn new(model: &Path, provider: Provider, strength: f32) -> Result<Self> {
-        if !provider.compiled() {
-            bail!(
-                "provider {} 未编译或不支持当前平台；请查看 anr backends，并启用对应 ort feature",
-                provider.name()
-            );
-        }
-        #[cfg(feature = "ort")]
-        {
-            anr::ort::initialize_runtime().context("无法初始化 ONNX Runtime")?;
-            let environment = anr::ort::init()
-                .build()
-                .context("无法创建 ONNX Runtime 环境")?;
-            let reducer = load_model(&environment, model, provider, strength)?;
-            Ok(Self {
-                model: model.to_owned(),
-                provider,
-                strength,
-                spec: EngineSpec {
-                    sample_rate: anr::DFN3::SAMPLE_RATE,
-                    frame_samples: anr::DFN3::FRAME_SIZE,
-                },
-                reducers: vec![reducer],
-                environment,
-            })
-        }
-        #[cfg(not(feature = "ort"))]
-        {
-            let _ = (model, strength);
-            bail!("此程序未启用 ORT 后端；请以 ort feature 重新构建")
-        }
+    pub fn new(
+        model: &Path,
+        backend: Backend,
+        provider: Option<Provider>,
+        strength: f32,
+    ) -> Result<Self> {
+        let (resources, spec) = BackendResources::new(backend, provider)?;
+        let reducer = resources.load(model, strength)?;
+        Ok(Self {
+            model: model.to_owned(),
+            resources,
+            strength,
+            spec,
+            reducers: vec![reducer],
+        })
     }
 
     pub fn prepare(&mut self, channels: usize) -> Result<()> {
@@ -61,10 +128,7 @@ impl EnginePool {
             bail!("输入没有音频声道");
         }
         while self.reducers.len() < channels {
-            #[cfg(feature = "ort")]
-            let reducer = load_model(&self.environment, &self.model, self.provider, self.strength)?;
-            #[cfg(not(feature = "ort"))]
-            let reducer = load_model(&self.model, self.provider, self.strength)?;
+            let reducer = self.resources.load(&self.model, self.strength)?;
             self.reducers.push(reducer);
         }
         self.reducers.truncate(channels);
@@ -81,14 +145,14 @@ impl EnginePool {
 }
 
 #[cfg(feature = "ort")]
-fn load_model(
+fn load_ort_model(
     environment: &anr::ort::environment::Environment,
     model: &Path,
     provider: Provider,
     strength: f32,
 ) -> Result<Box<dyn NoiseReduction>> {
     let mut reducer = if provider == Provider::Cpu {
-        anr::DFN3::from_file(environment, model)
+        anr::ort::DFN3::from_file(environment, model)
             .with_context(|| format!("无法加载模型 {}", model.display()))?
     } else {
         let session = (|| -> anr::ort::Result<anr::ort::session::Session> {
@@ -120,19 +184,10 @@ fn load_model(
                 model.display()
             )
         })?;
-        anr::DFN3::new(session).context("模型的 DFN3 输入输出接口不兼容")?
+        anr::ort::DFN3::new(session).context("模型的 DFN3 输入输出接口不兼容")?
     };
     reducer.set_factor(strength);
     Ok(Box::new(reducer))
-}
-
-#[cfg(not(feature = "ort"))]
-fn load_model(
-    _model: &Path,
-    _provider: Provider,
-    _strength: f32,
-) -> Result<Box<dyn NoiseReduction>> {
-    bail!("此程序未启用 ORT 后端")
 }
 
 #[cfg(feature = "ort")]
@@ -158,6 +213,7 @@ fn dispatch(provider: Provider) -> Result<anr::ort::ep::ExecutionProviderDispatc
 pub struct BackendInfo {
     pub name: &'static str,
     pub compiled: bool,
+    pub runtime_available: Option<bool>,
     pub providers: Vec<ProviderInfo>,
 }
 
@@ -169,16 +225,25 @@ pub struct ProviderInfo {
 }
 
 pub fn backends() -> Vec<BackendInfo> {
-    vec![BackendInfo {
-        name: "ort",
-        compiled: cfg!(feature = "ort"),
-        providers: Provider::ALL
-            .iter()
-            .map(|provider| ProviderInfo {
-                name: provider.name(),
-                compiled: provider.compiled(),
-                runtime_available: None,
-            })
-            .collect(),
-    }]
+    vec![
+        BackendInfo {
+            name: "ort",
+            compiled: cfg!(feature = "ort"),
+            runtime_available: None,
+            providers: Provider::ALL
+                .iter()
+                .map(|provider| ProviderInfo {
+                    name: provider.name(),
+                    compiled: provider.compiled(),
+                    runtime_available: None,
+                })
+                .collect(),
+        },
+        BackendInfo {
+            name: "gl",
+            compiled: cfg!(feature = "gl"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+    ]
 }

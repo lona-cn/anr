@@ -1,0 +1,25 @@
+[package]
+name = "anr-gl"
+description = "Model-specific DeepFilterNet3 inference with OpenGL compute shaders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+include = ["src/**", "tests/**", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+bytemuck = "1.24"
+glow = "0.16"
+prost = "0.14"
+sha2 = "0.10"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+glutin = { version = "0.32.3", default-features = false, features = ["egl", "wgl"] }
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+tempfile = "3.27"

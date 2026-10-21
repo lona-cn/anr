@@ -154,7 +154,7 @@ fn denoise(
     let (jobs, mut destinations) = plan_jobs(args)?;
     cancel::check(&cancelled)?;
     // Initialize once before creating any output directory or transaction.
-    let mut engines = EnginePool::new(&args.model, args.provider, args.strength)?;
+    let mut engines = EnginePool::new(&args.model, args.backend, args.provider, args.strength)?;
     if let Some(dir) = &args.output_dir {
         fs::create_dir_all(dir).with_context(|| format!("无法创建输出目录 {}", dir.display()))?;
         // Creating a previously missing parent can resolve `..` or aliases
@@ -190,14 +190,20 @@ fn denoise(
             };
             if verbose {
                 eprintln!(
-                    "{}: {} Hz / {} 声道 → {} Hz，provider={}，strength={}",
+                    "{}: {} Hz / {} 声道 → {} Hz，backend={}，strength={}",
                     job.input.display(),
                     input_spec.sample_rate,
                     input_spec.channels,
                     output_spec.sample_rate,
-                    args.provider.name(),
+                    args.backend.name(),
                     args.strength
                 );
+                if args.backend == crate::args::Backend::Ort {
+                    eprintln!(
+                        "provider={}",
+                        args.provider.unwrap_or(crate::args::Provider::Cpu).name()
+                    );
+                }
             }
             let mut sink = create_output(
                 &job.output,
@@ -222,12 +228,13 @@ fn denoise(
                 .with_context(|| format!("无法完成输出 {}", job.output.display()))?;
             if !quiet {
                 eprintln!(
-                    "已完成 {} → {}：每声道 {} 个采样，{} Hz，{} 声道",
+                    "已完成 {} → {}：每声道 {} 个采样，{} Hz，{} 声道，backend={}",
                     job.input.display(),
                     job.output.display(),
                     stats.output_frames,
                     stats.output_rate,
-                    stats.channels
+                    stats.channels,
+                    args.backend.name()
                 );
             }
             Ok(())

@@ -104,6 +104,12 @@ anr = { version = "0.1.0", default-features = false, features = ["ort-load-dynam
 
 Call `anr::ort::initialize_runtime()` before `anr::ort::init().build()` to return dynamic-loading failures instead of entering the lazy loader. The helper does not build an environment; your application owns and configures it. Share that `Environment` across denoisers. `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, one intra-op thread, and no spinning. To choose another provider, use `anr::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
 
+### OpenGL without ORT
+
+Enable `default-features = false, features = ["gl"]` and construct `anr::gl::DFN3::from_file(path)`. It implements the same `NoiseReduction` interface without an ORT environment or runtime. Each instance owns a worker-thread GL context and GPU-resident state; `run` is synchronous.
+
+Requires Windows desktop OpenGL 4.3 or a Linux hardware EGL device with desktop GL 4.3/pbuffer support; macOS is unsupported. The original external ONNX file is used only for parameters and must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. No model conversion or Python is required. Other exports and unsupported drivers fail explicitly, without a CPU fallback. The model's strength-zero behavior is preserved; it is not an audio bypass.
+
 ### License
 
 The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
@@ -211,6 +217,12 @@ anr = { version = "0.1.0", default-features = false, features = ["ort-load-dynam
 ```
 
 在 `anr::ort::init().build()` 前调用 `anr::ort::initialize_runtime()`，让动态加载失败正常返回，避免进入上游的隐式加载路径。这个函数不创建环境，环境由应用持有和配置，多个降噪实例共享同一个 `Environment`。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以单线程执行算子并禁用忙等待。若要选其他 provider，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+
+### 不使用 ORT 的 OpenGL 后端
+
+启用 `default-features = false, features = ["gl"]`，使用 `anr::gl::DFN3::from_file(path)` 创建实例，继续调用 `NoiseReduction`，无需 ORT 环境或运行库。每个实例由工作线程持有 GL context，状态常驻 GPU；`run` 同步返回输出。
+
+Windows 需要桌面 OpenGL 4.3；Linux 需要支持桌面 GL 4.3/pbuffer 的硬件 EGL device；不支持 macOS。模型仍是原始外置 ONNX 文件，只读取参数，并要求 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。无需模型转换或 Python。其他模型或不支持的驱动明确报错，不退回 CPU。保留原模型强度为零时的行为，不将其改为音频旁路。
 
 ### 许可
 

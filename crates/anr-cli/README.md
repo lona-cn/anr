@@ -4,9 +4,9 @@
 
 ## English
 
-`anr-cli` installs the `anr` command for denoising audio files, processing batches one file at a time, and reading or writing audio through stdin/stdout. It calls DFN3 / ONNX Runtime through `anr` and handles decoding, band-limited resampling, and multiple channels itself. You don't need FFmpeg or Python to run it.
+`anr-cli` installs the `anr` command for denoising audio files, processing batches one file at a time, and reading or writing audio through stdin/stdout. It calls DFN3 through `anr`, using ONNX Runtime by default or the optional fixed-model OpenGL Compute backend, and handles decoding, band-limited resampling, and multiple channels itself. You don't need FFmpeg or Python to run it.
 
-Building from source requires the **latest stable Rust toolchain**. You must supply a model explicitly: none is packaged, downloaded automatically, or picked up from a `models/` directory in the checkout. It must have exactly these three inputs and three outputs, all `f32`:
+Building from source requires the **latest stable Rust toolchain**. You must supply a model explicitly: none is packaged, downloaded automatically, or picked up from a `models/` directory in the checkout. For the ORT backend, it must have exactly these three inputs and three outputs, all `f32`:
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -91,7 +91,8 @@ anr backends [--json]
 | `--output PATH` | Destination for one input; `-` means stdout. Cannot be combined with `--output-dir`. |
 | `--output-dir DIR` | Processes files serially, using each input's stem with `.wav`, or `.f32le` when raw output is selected. Does not rename colliding outputs. |
 | `--model PATH` | Required model path. |
-| `--backend ort` / `--provider cpu` | Current backend and default execution provider. Other providers need the corresponding Cargo feature and runtime environment. |
+| `--backend ort\|gl` | Defaults to `ort`. `gl` requires the `gl` Cargo feature and the exact supported model described below. |
+| `--provider cpu` | ORT only; defaults to `cpu` when omitted for ORT. Other providers need the corresponding Cargo feature and runtime environment. Any explicit `--provider` with `--backend gl` is an argument error. |
 | `--strength 80` | Defaults to 80. Accepts finite values in `0..=100`; rejects NaN, infinity, and out-of-range values rather than clamping them. |
 | `--input-format auto\|f32le` | Defaults to detecting audio with headers. Raw input requires explicit `f32le`. |
 | `--input-rate HZ` / `--input-channels N` | Required positive values for raw input. Cannot override the specifications in an audio header. |
@@ -101,7 +102,7 @@ anr backends [--json]
 | `--overwrite` | Allows replacing an existing output after processing finishes. Never permits replacing an input, model, or a result already completed in this batch. |
 | `--quiet` / `--verbose` | Mutually exclusive global options for stderr diagnostics. Do not change audio stdout. |
 
-Before writing output, batch processing checks global arguments, the model/provider, and resolvable destination conflicts. Actual file identities are checked again before processing and before committing, including case-insensitive aliases. If a previously nonexistent alias is discovered after an earlier batch result was saved, the later file fails instead of replacing that result. The model is reused with state reset between files. Failed files remove their temporary output and processing continues; the final exit code is 1 and successful files remain. If a saved file's identity cannot be verified, the CLI reports that it was saved and stops further processing. There is no whole-batch rollback.
+Before writing output, batch processing checks global arguments, the model/backend (and ORT provider when applicable), and resolvable destination conflicts. Actual file identities are checked again before processing and before committing, including case-insensitive aliases. If a previously nonexistent alias is discovered after an earlier batch result was saved, the later file fails instead of replacing that result. Each channel has an independent reducer, reused with state reset between files. Failed files remove their temporary output and processing continues; the final exit code is 1 and successful files remain. If a saved file's identity cannot be verified, the CLI reports that it was saved and stops further processing. There is no whole-batch rollback.
 
 Each file is first written to a temporary file in the destination directory. It is moved to the final path only after inference, encoding, and WAV finalization finish. Existing files are not overwritten by default; even with `--overwrite`, the old file is not truncated before processing. This does not guarantee durability through power loss. Bytes already written to stdout cannot be taken back. Check the exit code and stderr before treating a stream as complete.
 
@@ -160,13 +161,14 @@ with open("input.f32le", "rb") as source, open("clean.f32le", "wb") as target:
 
 Cancellation stops the processing loop and removes the current temporary file. A blocked standard stream does not require the caller to send EOF before cancellation can be handled.
 
-### Build with execution providers
+### Build with backends and execution providers
 
 ```text
 cargo build -p anr-cli --release
 cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
+cargo build -p anr-cli --no-default-features --features gl
 ```
 
 With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. CUDA/TensorRT, DirectML, CoreML, and XNNPACK flags forward to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them.
@@ -174,6 +176,19 @@ With no features, the CLI can list compiled support and inspect audio but cannot
 For example, build with DirectML on Windows and select `--provider directml`, or build with CoreML on macOS and select `--provider coreml`. The default remains `cpu`. Explicit provider registration or initialization failures are errors. CUDA, TensorRT, DirectML, and CoreML cannot silently fall back to CPU for the whole graph; unsupported operators may cause a failure. XNNPACK is itself a CPU provider and allows ordinary CPU kernels to handle operators it doesn't support. It does not promise to run every operator through XNNPACK. In `backends --json`, `compiled` means support was built in; `runtime_available: null` means runtime availability has not been checked, not that a model has run successfully.
 
 For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
+
+The optional `gl` feature selects a separate native OpenGL 4.3 Compute implementation; it does not enable ONNX Runtime. Build with `--no-default-features --features gl` for GL only, or add `--features gl` to the default build to retain both backends. Select it explicitly:
+
+```text
+anr denoise input.wav --model /path/to/dfn3.onnx --backend gl --output clean.wav
+```
+
+GL uses the original ONNX file only as a parameter container, not as a generic executable graph. It accepts the fixed DFN3 model with SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; a different export is rejected even if its ports have the same shapes. The model runs at 48 kHz with 480-sample frames, with the same CLI resampling, per-channel state, strength, reset, and output-length handling. Native context support targets Windows and Linux desktop drivers with OpenGL 4.3 Compute; macOS is unsupported. Driver/context initialization may still fail, and no performance or hardware-coverage claim is made here.
+
+Do not pass `--provider` with GL, including `--provider cpu`. `backends --json` lists both backends without creating a GL context: GL has no ORT providers and its `runtime_available` remains `null`. Verbose processing diagnostics name the backend; provider diagnostics are emitted only for ORT.
+
+GL's real-model CLI tests are opt-in. Set `ANR_DFN3_MODEL` to that original ONNX file and run `cargo test -p anr-cli --no-default-features --features gl --test cli gl_ -- --ignored` on a machine with the required driver. These tests exercise raw/WAV audio, independent stereo state, partial-frame length, batch reset, and strength. Their presence is not a claim that they have run on any particular platform.
+
 
 ### What has been tested
 
@@ -193,9 +208,9 @@ Dependencies and model weights keep their own licenses. The supplied model asset
 
 ## 简体中文
 
-`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3 / ONNX Runtime，自行完成解码、带限重采样和多声道处理。运行时不需要 FFmpeg 或 Python。
+`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择固定模型的 OpenGL Compute 后端，自行完成解码、带限重采样和多声道处理。运行时不需要 FFmpeg 或 Python。
 
-从源码构建需要 **最新 Rust stable 工具链**。Rust crate / `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 附带模型和运行库。无论哪种方式，`--model` 都必须明确传入，也不会自行选用源码目录里的 `models/` 文件。模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
+从源码构建需要 **最新 Rust stable 工具链**。Rust crate / `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 附带模型和运行库。无论哪种方式，`--model` 都必须明确传入，也不会自行选用源码目录里的 `models/` 文件。ORT 后端的模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -280,7 +295,8 @@ anr backends [--json]
 | `--output PATH` | 单输入的目标文件；`-` 表示 stdout。与 `--output-dir` 互斥。 |
 | `--output-dir DIR` | 逐个处理文件，按输入文件名去掉扩展名后生成 `.wav`，明确选择 raw 时生成 `.f32le`。同名结果不自动改名。 |
 | `--model PATH` | 必填的模型路径。 |
-| `--backend ort` / `--provider cpu` | 当前后端及默认执行 provider；其他 provider 需对应的 Cargo feature 和运行环境。 |
+| `--backend ort\|gl` | 默认 `ort`。`gl` 需启用 `gl` Cargo feature，并使用后文说明的固定模型。 |
+| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应的 Cargo feature 和运行环境。`--backend gl` 与任何显式 `--provider` 同用均为参数错误。 |
 | `--strength 80` | 默认 80；必须是 `0..=100` 的有限数值，拒绝 NaN、无穷和越界值，不静默修正。 |
 | `--input-format auto\|f32le` | 默认探测带头音频；raw 必须明确选 `f32le`。 |
 | `--input-rate HZ` / `--input-channels N` | raw 输入必填的正数；带头音频不能用它们覆盖真实规格。 |
@@ -290,7 +306,7 @@ anr backends [--json]
 | `--overwrite` | 允许处理完成后替换已有目标，仍禁止覆盖输入、模型或本批次已经成功保存的结果。 |
 | `--quiet` / `--verbose` | 互斥的全局选项，控制 stderr 诊断，不改变音频 stdout。 |
 
-批处理在开始输出前检查全局参数、模型/provider 和可确定的目标冲突，并在处理前及提交前复核实际文件身份，包括大小写不敏感文件系统的别名。如果先前不存在的别名在本批次较早的结果保存后才显现，后一个文件会失败，不会覆盖先前结果。模型复用但文件间重置状态；失败文件清理临时输出并继续，最终退出 1，成功文件保留。若文件已经保存但无法核验其身份，会明确报告已保存并停止后续处理；不撤销整批结果。
+批处理在开始输出前检查全局参数、模型/后端（ORT 还检查 provider）和可确定的目标冲突，并在处理前及提交前复核实际文件身份，包括大小写不敏感文件系统的别名。如果先前不存在的别名在本批次较早的结果保存后才显现，后一个文件会失败，不会覆盖先前结果。每个声道持有独立 reducer，文件间复用并重置状态；失败文件清理临时输出并继续，最终退出 1，成功文件保留。若文件已经保存但无法核验其身份，会明确报告已保存并停止后续处理；不撤销整批结果。
 
 文件先写到目标同目录的临时文件，推理、编码和 WAV 文件收尾全部完成后才移到最终路径。默认不覆盖；即使使用 `--overwrite`，也不会在开始处理前截断旧文件。这不保证断电后数据仍然完整。stdout 已发出的字节无法撤回；失败时必须检查退出码和 stderr，不能把部分音频流当完整结果。
 
@@ -349,13 +365,14 @@ with open("input.f32le", "rb") as source, open("clean.f32le", "wb") as target:
 
 取消时退出处理循环并清理当前临时文件；即使标准流阻塞，也不需要调用者先发送 EOF 才能响应取消。
 
-### 编入不同执行 provider
+### 编入不同后端与执行 provider
 
 ```text
 cargo build -p anr-cli --release
 cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
+cargo build -p anr-cli --no-default-features --features gl
 ```
 
 完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。CUDA/TensorRT、DirectML、CoreML、XNNPACK 等 flag 转发到 `anr`，需要对应平台、库和驱动；选择 feature 不会安装它们。
@@ -363,6 +380,19 @@ cargo build -p anr-cli --no-default-features --features ort-load-dynamic
 例如，在 Windows 编入 DirectML 后选择 `--provider directml`，在 macOS 编入 CoreML 后选择 `--provider coreml`。默认仍为 `cpu`。明确指定的 provider 注册或初始化失败会报错；CUDA、TensorRT、DirectML、CoreML 不会在整张图无法执行时静默改用 CPU，遇到不支持的算子可能直接失败。XNNPACK 本身是 CPU provider，允许普通 CPU kernel 处理它不支持的算子，不代表全部算子都由 XNNPACK 运行。`backends --json` 中，`compiled` 只表示编译时加入了支持；`runtime_available: null` 表示尚未检查运行时可用性，不代表模型成功运行。
 
 动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
+
+可选 `gl` feature 使用独立的原生 OpenGL 4.3 Compute 实现，不会启用 ONNX Runtime。用 `--no-default-features --features gl` 构建仅 GL 版本，或在默认构建上添加 `--features gl` 保留两种后端。运行时需明确选择：
+
+```text
+anr denoise input.wav --model /path/to/dfn3.onnx --backend gl --output clean.wav
+```
+
+GL 仅将原 ONNX 文件作为参数容器，不执行通用 ONNX 图。只接受 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 的固定 DFN3 模型；即使端口大小相同，其他导出版本也会拒绝。模型以 48 kHz、480 采样帧运行，沿用 CLI 的重采样、声道独立状态、strength、重置和输出长度处理。原生 context 面向具备 OpenGL 4.3 Compute 的 Windows、Linux 桌面驱动；不支持 macOS。驱动/context 初始化仍可能失败，此处不作性能或硬件覆盖结论。
+
+GL 不能传 `--provider`，包括 `--provider cpu`。`backends --json` 会同时列出两种后端，但不创建 GL context；GL 没有 ORT provider，`runtime_available` 保持 `null`。verbose 处理日志显示 backend，仅 ORT 显示 provider。
+
+GL 真实模型 CLI 测试需主动启用：把 `ANR_DFN3_MODEL` 指向该原始 ONNX，在具备所需驱动的机器执行 `cargo test -p anr-cli --no-default-features --features gl --test cli gl_ -- --ignored`。测试覆盖 raw/WAV、立体声独立状态、非整帧长度、批处理重置及 strength。添加了测试不代表已在任何特定平台执行通过。
+
 
 ### 哪些已经测过
 
