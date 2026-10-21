@@ -18,6 +18,8 @@ pub struct EnginePool {
     strength: f32,
     spec: EngineSpec,
     reducers: Vec<Box<dyn NoiseReduction>>,
+    #[cfg(feature = "ort")]
+    environment: anr::ort::environment::Environment,
 }
 
 impl EnginePool {
@@ -30,7 +32,11 @@ impl EnginePool {
         }
         #[cfg(feature = "ort")]
         {
-            let reducer = load_model(model, provider, strength)?;
+            anr::ort::initialize_runtime().context("无法初始化 ONNX Runtime")?;
+            let environment = anr::ort::init()
+                .build()
+                .context("无法创建 ONNX Runtime 环境")?;
+            let reducer = load_model(&environment, model, provider, strength)?;
             Ok(Self {
                 model: model.to_owned(),
                 provider,
@@ -40,6 +46,7 @@ impl EnginePool {
                     frame_samples: anr::DFN3::FRAME_SIZE,
                 },
                 reducers: vec![reducer],
+                environment,
             })
         }
         #[cfg(not(feature = "ort"))]
@@ -54,8 +61,11 @@ impl EnginePool {
             bail!("输入没有音频声道");
         }
         while self.reducers.len() < channels {
-            self.reducers
-                .push(load_model(&self.model, self.provider, self.strength)?);
+            #[cfg(feature = "ort")]
+            let reducer = load_model(&self.environment, &self.model, self.provider, self.strength)?;
+            #[cfg(not(feature = "ort"))]
+            let reducer = load_model(&self.model, self.provider, self.strength)?;
+            self.reducers.push(reducer);
         }
         self.reducers.truncate(channels);
         // pipeline::process resets once for each new stream, not each packet.
@@ -71,12 +81,18 @@ impl EnginePool {
 }
 
 #[cfg(feature = "ort")]
-fn load_model(model: &Path, provider: Provider, strength: f32) -> Result<Box<dyn NoiseReduction>> {
+fn load_model(
+    environment: &anr::ort::environment::Environment,
+    model: &Path,
+    provider: Provider,
+    strength: f32,
+) -> Result<Box<dyn NoiseReduction>> {
     let mut reducer = if provider == Provider::Cpu {
-        anr::DFN3::from_file(model).with_context(|| format!("无法加载模型 {}", model.display()))?
+        anr::DFN3::from_file(environment, model)
+            .with_context(|| format!("无法加载模型 {}", model.display()))?
     } else {
         let session = (|| -> anr::ort::Result<anr::ort::session::Session> {
-            let mut builder = anr::ort::session::Session::builder()?
+            let mut builder = anr::ort::session::Session::builder(environment)?
                 .with_no_environment_execution_providers()?
                 .with_independent_thread_pool()?
                 .with_intra_threads(1)?

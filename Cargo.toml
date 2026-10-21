@@ -10,6 +10,6 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anr-core = { version = "0.1.0", path = "crates/anr-core" }
-anr-ort = { version = "0.1.0", path = "crates/anr-ort" }
+anr-ort = { version = "0.1.0", path = "crates/anr-ort", default-features = false }
 anr = { version = "0.1.0", path = "crates/anr", default-features = false }
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "api-27"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-27"] }

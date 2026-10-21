@@ -23,7 +23,9 @@ use anr_core::{NoiseReduction, Result};
 use anr_ort::DFN3;
 
 fn main() -> Result<()> {
-    let mut denoiser = DFN3::from_file("models/dfn3.onnx")?;
+    anr_ort::initialize_runtime()?;
+    let environment = anr_ort::ort::init().build().map_err(anr_core::Error::backend)?;
+    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
     denoiser.set_factor(80.0);
 
     let input = [0.0_f32; DFN3::FRAME_SIZE];
@@ -62,7 +64,7 @@ Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive an
 
 ### Required model inputs and outputs
 
-`DFN3::from_file(path)` loads a model file; `DFN3::new(session)` uses a configured ONNX Runtime session. Both require exactly these three inputs and three outputs, all `f32`. Input order does not matter. `[]` is a scalar; `[1]` is a one-element vector.
+`DFN3::from_file(&environment, path)` loads a model using an application-owned `Environment`; `DFN3::new(session)` uses a configured ONNX Runtime session. Both require exactly these three inputs and three outputs, all `f32`. Input order does not matter. `[]` is a scalar; `[1]` is a one-element vector.
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -79,7 +81,7 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 
 ### Download the CPU runtime or supply your own
 
-`anr_ort::ort` exposes the ONNX Runtime types used by this crate. The project pins `ort = 2.0.0-rc.13` (API 27), without `ndarray`.
+`anr_ort::ort` exposes the ONNX Runtime types used by this crate. The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. The default prebuilt runtime is 1.31.0; API-27-compatible self-provided libraries such as 1.28.0 are also supported.
 
 The default `download-binaries` feature downloads and copies the CPU runtime libraries at build time, requiring network access and platform support. To use a runtime you already have, disable default features and enable `load-dynamic`:
 
@@ -87,13 +89,13 @@ The default `download-binaries` feature downloads and copies the CPU runtime lib
 anr-ort = { version = "0.1.0", default-features = false, features = ["load-dynamic"] }
 ```
 
-Before the process first initializes ONNX Runtime, set `ORT_DYLIB_PATH` to a shared library file that supports API 27, not a directory.
+Before building an environment, call `anr_ort::initialize_runtime()` to load `ORT_DYLIB_PATH` through the fallible loader. The variable points to an API-27-compatible shared library file, not a directory; unset or empty uses the platform's default name. Failed loads can be retried, and a loaded library is reused. This function does not build an environment or replace the host's settings. Build and keep one `Environment` in your application and share it between models. Disabling defaults removes the downloader and its TLS/OpenSSL build dependencies.
 
 #### Device features do not select a GPU
 
 `cuda`, `tensorrt`, `directml`, `coreml`, and `xnnpack` compile support for the corresponding libraries. They do not select a device or install drivers or other required libraries.
 
-`DFN3::from_file` always uses CPU execution with one intra-op thread and disables thread-pool spinning. To choose an execution provider, configure one from `anr_ort::ort::ep` with `anr_ort::ort::session::Session::builder()`, then pass the session to `DFN3::new(session)`.
+`DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, use `anr_ort::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
 
 ### License
 
@@ -122,7 +124,9 @@ use anr_core::{NoiseReduction, Result};
 use anr_ort::DFN3;
 
 fn main() -> Result<()> {
-    let mut denoiser = DFN3::from_file("models/dfn3.onnx")?;
+    anr_ort::initialize_runtime()?;
+    let environment = anr_ort::ort::init().build().map_err(anr_core::Error::backend)?;
+    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
     denoiser.set_factor(80.0);
 
     let input = [0.0_f32; DFN3::FRAME_SIZE];
@@ -161,7 +165,7 @@ fn main() -> Result<()> {
 
 ### 模型必须有这六个输入和输出
 
-`DFN3::from_file(path)` 加载模型文件，`DFN3::new(session)` 使用已经建好的 ONNX Runtime session。两种方式都只接受下表的三个输入和三个输出，类型必须为 `f32`，输入的排列顺序不限。`[]` 表示单个数，`[1]` 表示只有一个数的一维数组。
+`DFN3::from_file(&environment, path)` 使用应用持有的 `Environment` 加载模型；`DFN3::new(session)` 使用已经建好的 ONNX Runtime session。两种方式都只接受下表的三个输入和三个输出，类型必须为 `f32`，输入排列不限。`[]` 表示单个数，`[1]` 表示只有一个数的一维数组。
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -178,7 +182,7 @@ fn main() -> Result<()> {
 
 ### 默认下载 CPU 运行库，也可以使用自己的运行库
 
-本包通过 `anr_ort::ort` 提供所用版本的 ONNX Runtime 类型。当前固定使用 `ort = 2.0.0-rc.13`（API 27），不启用 `ndarray`。
+本包通过 `anr_ort::ort` 提供所用版本的运行库类型，固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也支持兼容 API 27 的自备库，例如 1.28.0。
 
 默认启用 `download-binaries`，在构建时下载并复制 CPU 使用的 ONNX Runtime，需要网络和目标平台支持。如果已经准备好运行库，可以关闭默认功能，改用 `load-dynamic`：
 
@@ -186,13 +190,13 @@ fn main() -> Result<()> {
 anr-ort = { version = "0.1.0", default-features = false, features = ["load-dynamic"] }
 ```
 
-在进程首次初始化 ONNX Runtime 前，将 `ORT_DYLIB_PATH` 设为兼容 API 27 的共享库文件路径，不是目录。
+创建环境前调用 `anr_ort::initialize_runtime()`，通过可返回错误的入口加载 `ORT_DYLIB_PATH`。变量应指向兼容 API 27 的共享库文件，不是目录；未设置或为空时使用平台默认库名。加载失败后可以重试，已加载的库会复用。这个函数不创建环境或替换宿主设置；应用自行创建并持有一个 `Environment`，供模型共享。关闭 defaults 后不再引入下载器及 TLS/OpenSSL 构建依赖。
 
 #### 启用设备支持，不会自动改用 GPU
 
 `cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` 编入对应库的支持，不会自动选择设备，也不会安装驱动或其他必需的库。
 
-`DFN3::from_file` 固定使用 CPU，以一个线程执行算子，并关闭线程池的忙等待。若要自己选择执行 provider，通过 `anr_ort::ort::session::Session::builder()` 配置 `anr_ort::ort::ep` 中的选项，再把建好的 session 传给 `DFN3::new(session)`。
+`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，用 `anr_ort::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
 
 ### 许可
 

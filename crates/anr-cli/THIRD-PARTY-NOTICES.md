@@ -30,14 +30,15 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 | rubato 0.16.2 | MIT | [HEnquist/rubato](https://github.com/HEnquist/rubato)，[精确版本源码](https://docs.rs/crate/rubato/0.16.2/source/) |
 | hound 3.5.1 | Apache-2.0 | [ruuda/hound](https://github.com/ruuda/hound)，[精确版本源码](https://docs.rs/crate/hound/3.5.1/source/) |
 | RustFFT（rubato 的 FFT 依赖链） | MIT OR Apache-2.0 | [ejmahler/RustFFT](https://github.com/ejmahler/RustFFT) |
+| file-id 0.2.3 | MIT OR Apache-2.0 | [notify-rs/notify](https://github.com/notify-rs/notify)，[精确版本源码](https://docs.rs/crate/file-id/0.2.3/source/) |
 | clap、anyhow、ctrlc、tempfile、serde、serde_json | 各自声明 MIT OR Apache-2.0 | [clap](https://github.com/clap-rs/clap)、[anyhow](https://github.com/dtolnay/anyhow)、[ctrlc](https://github.com/Detegr/rust-ctrlc)、[tempfile](https://github.com/Stebalien/tempfile)、[serde](https://github.com/serde-rs/serde)、[serde_json](https://github.com/serde-rs/json) |
 
 以上不省略传递依赖义务；以实际解析版本的 package 源码及许可为准。尤其 MIT 的版权和许可文本、Apache-2.0 的许可及适用 NOTICE 不可用项目自身的版权通知替换。
 
 ## Rust ORT 绑定与 ONNX Runtime 是两个组件
 
-- Rust `ort` / `ort-sys` 固定为 **2.0.0-rc.13**，声明 **MIT OR Apache-2.0**，来自 [pykeio/ort](https://github.com/pykeio/ort)。其 [ort 源码](https://docs.rs/crate/ort/2.0.0-rc.13/source/) 与 [ort-sys 源码](https://docs.rs/crate/ort-sys/2.0.0-rc.13/source/) 含独立版权和许可。
-- Microsoft **ONNX Runtime** 是实际执行推理的原生运行库，不是 Rust 绑定的另一名称。其 [上游源码](https://github.com/microsoft/onnxruntime)、[v1.28.0 MIT 许可](https://github.com/microsoft/onnxruntime/blob/v1.28.0/LICENSE) 和 [ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/v1.28.0/ThirdPartyNotices.txt) 需独立处理。默认下载的打包构建、自建库和用户通过 `ORT_DYLIB_PATH` 选择的库可能具有不同组件集合，必须核对实际构建附带文件。
+- Rust `ort` / `ort-sys` 固定为 **2.0.0-rc.15**，声明 **MIT OR Apache-2.0**，来自 [pykeio/ort](https://github.com/pykeio/ort)。其 [ort 源码](https://docs.rs/crate/ort/2.0.0-rc.15/source/) 与 [ort-sys 源码](https://docs.rs/crate/ort-sys/2.0.0-rc.15/source/) 含独立版权和许可。
+- Microsoft **ONNX Runtime** 是实际执行推理的原生运行库，不是 Rust 绑定的另一名称；其 [上游源码](https://github.com/microsoft/onnxruntime)、[MIT 许可](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) 和 [ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt) 需独立处理。绑定的默认预编译分发为 1.31.0；Intel macOS CI 和兼容性验收也使用 API-27-compatible 1.28.0。默认分发、自建库和 `ORT_DYLIB_PATH` 指定库的组件集合可能不同，必须保留**实际使用版本**附带的版权、许可与通知，不能用上游当前版本的文件替代。
 - CUDA、TensorRT、DirectML、CoreML、XNNPACK 等 provider 及其驱动、SDK、系统框架或随附库各有适用条款。选择 Cargo feature 不代表取得其再分发许可，也不表示这些库已被安装。分发者只应携带有权分发的运行库及其通知，不把 Microsoft、NVIDIA、Apple 或其他供应商组件列为 anr contributors 自有代码。
 
 ## 模型权重与测试控制图

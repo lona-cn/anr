@@ -31,27 +31,34 @@ struct Process {
 
 impl Process {
     fn spawn(command: &mut Command, stdout_prefix: Option<u64>) -> Self {
+        Self::spawn_with_stdout(command, stdout_prefix, Stdio::piped())
+    }
+
+    fn spawn_with_stdout(
+        command: &mut Command,
+        stdout_prefix: Option<u64>,
+        stdout_spec: Stdio,
+    ) -> Self {
         let mut child = command
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(stdout_spec)
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().unwrap();
+        let stdout = child.stdout.take();
         let stderr = child.stderr.take().unwrap();
         let (out_tx, out_rx) = mpsc::channel();
         let (err_tx, err_rx) = mpsc::channel();
         thread::spawn(move || {
             let mut bytes = Vec::new();
-            let result = match stdout_prefix {
-                Some(limit) => stdout.take(limit).read_to_end(&mut bytes),
-                None => {
-                    let mut stdout = stdout;
-                    stdout.read_to_end(&mut bytes)
-                }
-            };
-            result.unwrap();
+            if let Some(mut stdout) = stdout {
+                let result = match stdout_prefix {
+                    Some(limit) => stdout.take(limit).read_to_end(&mut bytes),
+                    None => stdout.read_to_end(&mut bytes),
+                };
+                result.unwrap();
+            }
             let _ = out_tx.send(bytes);
         });
         thread::spawn(move || {
@@ -868,4 +875,211 @@ fn inference_failure_after_a_written_frame_preserves_the_existing_target() {
     assert_code(&result, 1);
     assert_bytes(&std::fs::read(&target).unwrap(), original);
     assert_eq!(directory_names(dir.path()), before);
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn publish_truncated_wav_preserves_the_existing_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = model(dir.path());
+    // The first case has no payload. The second decodes complete packets
+    // before discovering that the final declared sample is missing.
+    for (frames, missing) in [(480, 480), (4096, 1)] {
+        let input = dir.path().join(format!("truncated-{frames}.wav"));
+        write_wav(&input, 48_000, 1, &vec![0.125; frames]);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&input)
+            .unwrap();
+        file.set_len(file.metadata().unwrap().len() - missing * 4)
+            .unwrap();
+        drop(file);
+        let output = dir.path().join(format!("keep-{frames}.wav"));
+        write_wav(&output, 48_000, 1, &[0.5; 480]);
+        let original = std::fs::read(&output).unwrap();
+        let before = directory_names(dir.path());
+        let result = run(
+            command()
+                .arg("denoise")
+                .arg(&input)
+                .arg("--output")
+                .arg(&output)
+                .arg("--model")
+                .arg(&model)
+                .arg("--overwrite"),
+            vec![],
+            false,
+        );
+        assert_code(&result, 1);
+        assert_bytes(&std::fs::read(&output).unwrap(), &original);
+        assert_eq!(directory_names(dir.path()), before);
+    }
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn publish_case_aliases_cannot_replace_inputs_or_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = model(dir.path());
+    let input = dir.path().join("VOICE.wav");
+    write_wav(&input, 48_000, 1, &[0.125; 480]);
+    let input_alias = dir.path().join("voice.wav");
+    if !input_alias.exists() {
+        // Exercised on Windows/macOS and on Linux with a case-insensitive TMPDIR.
+        return;
+    }
+    let original_audio = std::fs::read(&input).unwrap();
+    let original_model = std::fs::read(&model).unwrap();
+    let before = directory_names(dir.path());
+    for output in [input_alias, dir.path().join("CONTROL.ONNX")] {
+        let result = run(
+            command()
+                .arg("denoise")
+                .arg(&input)
+                .arg("--model")
+                .arg(&model)
+                .arg("--output")
+                .arg(output)
+                .args(["--output-format", "wav", "--overwrite", "--strength", "0"]),
+            vec![],
+            false,
+        );
+        assert_code(&result, 2);
+        assert_bytes(&std::fs::read(&input).unwrap(), &original_audio);
+        assert_bytes(&std::fs::read(&model).unwrap(), &original_model);
+        assert_eq!(directory_names(dir.path()), before);
+    }
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn publish_batch_aliases_cannot_replace_an_earlier_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = model(dir.path());
+    let first_dir = dir.path().join("first");
+    let second_dir = dir.path().join("second");
+    let output_dir = dir.path().join("out");
+    for path in [&first_dir, &second_dir, &output_dir] {
+        std::fs::create_dir(path).unwrap();
+    }
+    let probe = output_dir.join("Probe");
+    std::fs::write(&probe, b"case probe").unwrap();
+    if !output_dir.join("probe").exists() {
+        return;
+    }
+    std::fs::remove_file(probe).unwrap();
+    let first = first_dir.join("A.wav");
+    let second = second_dir.join("a.wav");
+    write_wav(&first, 48_000, 1, &[0.125; 480]);
+    write_wav(&second, 48_000, 1, &[0.375; 480]);
+    let result = run(
+        command()
+            .arg("denoise")
+            .arg(&first)
+            .arg(&second)
+            .arg("--output-dir")
+            .arg(&output_dir)
+            .arg("--model")
+            .arg(&model)
+            .args(["--overwrite", "--strength", "100"]),
+        vec![],
+        false,
+    );
+    if output_dir.join("A.wav").exists() {
+        // A filesystem alias discovered only after the first commit must not
+        // replace that completed result, even when --overwrite is explicit.
+        assert_code(&result, 1);
+        let (_, samples) = read_wav(&output_dir.join("A.wav"));
+        assert_eq!(samples, vec![0.125; 480]);
+        assert_eq!(directory_names(&output_dir).len(), 1);
+    } else {
+        // A platform that can detect the collision up front writes neither file.
+        assert_code(&result, 2);
+        assert!(directory_names(&output_dir).is_empty());
+    }
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn publish_case_sensitive_filesystems_keep_distinct_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = model(dir.path());
+    let input = dir.path().join("voice.wav");
+    let output = dir.path().join("VOICE.wav");
+    write_wav(&input, 48_000, 1, &[0.125; 480]);
+    if output.exists() {
+        return;
+    }
+    let original = std::fs::read(&input).unwrap();
+    let result = run(
+        command()
+            .arg("denoise")
+            .arg(&input)
+            .arg("--output")
+            .arg(&output)
+            .arg("--model")
+            .arg(&model)
+            .args(["--strength", "100"]),
+        vec![],
+        false,
+    );
+    assert_code(&result, 0);
+    assert_bytes(&std::fs::read(&input).unwrap(), &original);
+    let (_, samples) = read_wav(&output);
+    assert_eq!(samples, vec![0.125; 480]);
+}
+
+#[test]
+fn publish_json_broken_pipe_is_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("voice.wav");
+    write_wav(&input, 48_000, 1, &[0.125; 480]);
+    for mut cmd in [
+        {
+            let mut cmd = command();
+            cmd.args(["backends", "--json"]);
+            cmd
+        },
+        {
+            let mut cmd = command();
+            cmd.arg("inspect").arg(&input).arg("--json");
+            cmd
+        },
+    ] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let result = Process::spawn_with_stdout(&mut cmd, None, writer.into()).finish();
+        assert_code(&result, 0);
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[cfg(feature = "ort-load-dynamic")]
+#[test]
+fn publish_missing_dynamic_runtime_returns_error_without_touching_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = model(dir.path());
+    let input = dir.path().join("voice.f32le");
+    let output = dir.path().join("keep.f32le");
+    std::fs::write(&input, bytes(&[0.125; 480])).unwrap();
+    let original = b"previous completed output";
+    std::fs::write(&output, original).unwrap();
+    let before = directory_names(dir.path());
+    let providers: &[&str] = if cfg!(feature = "ort-xnnpack") {
+        &["cpu", "xnnpack"]
+    } else {
+        &["cpu"]
+    };
+    for provider in providers {
+        let result = run(
+            raw_command(&model, &input, &output, 1)
+                .env("ORT_DYLIB_PATH", dir.path().join("missing-runtime"))
+                .args(["--provider", provider, "--overwrite"]),
+            vec![],
+            false,
+        );
+        assert_code(&result, 1);
+        assert_bytes(&std::fs::read(&output).unwrap(), original);
+        assert_eq!(directory_names(dir.path()), before);
+    }
 }

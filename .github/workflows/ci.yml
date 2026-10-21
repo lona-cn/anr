@@ -57,7 +57,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes build-essential pkg-config libssl-dev
-      # ort-sys rc.13 has no prebuilt Intel macOS distribution. Build the
+      # ort-sys rc.15 has no prebuilt Intel macOS distribution. Build the
       # compatible upstream runtime natively, without enabling a GPU provider.
       - name: Cache Intel macOS ONNX Runtime shared libraries
         if: matrix.platform.host == 'x86_64-apple-darwin'

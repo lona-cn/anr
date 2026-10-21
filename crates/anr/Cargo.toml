@@ -15,8 +15,9 @@ anr-core.workspace = true
 anr-ort = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["ort-download-binaries"]
 ort = ["dep:anr-ort"]
+ort-download-binaries = ["anr-ort?/download-binaries"]
 ort-load-dynamic = ["ort", "anr-ort/load-dynamic"]
 ort-cuda = ["ort", "anr-ort/cuda"]
 ort-tensorrt = ["ort", "anr-ort/tensorrt"]
@@ -29,4 +30,5 @@ name = "denoise"
 required-features = ["ort"]
 
 [package.metadata.docs.rs]
+no-default-features = true
 features = ["ort-load-dynamic"]

@@ -5,6 +5,7 @@ use crate::{
     engine::{self, EnginePool},
 };
 use anyhow::{Context, Result, bail};
+use file_id::{FileId, get_file_id};
 use std::{
     collections::HashSet,
     ffi::OsString,
@@ -90,13 +91,67 @@ struct Job {
     format: OutputFormat,
 }
 
+struct DestinationGuard {
+    protected_paths: HashSet<PathBuf>,
+    protected_files: HashSet<FileId>,
+    completed_files: HashSet<FileId>,
+}
+
+impl DestinationGuard {
+    fn check(&self, output: &Path) -> Result<()> {
+        if output == Path::new("-") {
+            return Ok(());
+        }
+        self.check_resolved(output, &identity(output)?).map(|_| ())
+    }
+
+    fn check_resolved(&self, output: &Path, key: &Path) -> Result<Option<FileId>> {
+        let file = existing_file_id(output)?;
+        if self.protected_paths.contains(key)
+            || file
+                .as_ref()
+                .is_some_and(|file| self.protected_files.contains(file))
+        {
+            return Err(usage(format!(
+                "输出不能覆盖本次输入或模型：{}",
+                output.display()
+            )));
+        }
+        if file
+            .as_ref()
+            .is_some_and(|file| self.completed_files.contains(file))
+        {
+            bail!(
+                "输出与本批次已完成的文件相同，拒绝再次覆盖：{}",
+                output.display()
+            );
+        }
+        Ok(file)
+    }
+
+    fn record(&mut self, output: &Path) -> Result<()> {
+        if output != Path::new("-") {
+            self.completed_files.insert(get_file_id(output)?);
+        }
+        Ok(())
+    }
+}
+
+fn existing_file_id(path: &Path) -> Result<Option<FileId>> {
+    match get_file_id(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("无法识别文件身份：{}", path.display())),
+    }
+}
+
 fn denoise(
     args: &DenoiseArgs,
     quiet: bool,
     verbose: bool,
     cancelled: Arc<AtomicBool>,
 ) -> Result<u8> {
-    let jobs = plan_jobs(args)?;
+    let (jobs, mut destinations) = plan_jobs(args)?;
     cancel::check(&cancelled)?;
     // Initialize once before creating any output directory or transaction.
     let mut engines = EnginePool::new(&args.model, args.provider, args.strength)?;
@@ -104,7 +159,7 @@ fn denoise(
         fs::create_dir_all(dir).with_context(|| format!("无法创建输出目录 {}", dir.display()))?;
         // Creating a previously missing parent can resolve `..` or aliases
         // differently. Recheck the same jobs before opening any output.
-        validate_destinations(args, &jobs)?;
+        destinations = validate_destinations(args, &jobs)?;
     }
     let raw_spec = args
         .input_rate
@@ -117,6 +172,7 @@ fn denoise(
     for job in &jobs {
         cancel::check(&cancelled)?;
         let result = (|| -> Result<()> {
+            destinations.check(&job.output)?;
             let mut source = open_input(
                 &job.input,
                 args.input_format,
@@ -161,6 +217,7 @@ fn denoise(
                 &cancelled,
             )?;
             cancel::check(&cancelled)?;
+            destinations.check(&job.output)?;
             sink.finish()
                 .with_context(|| format!("无法完成输出 {}", job.output.display()))?;
             if !quiet {
@@ -182,6 +239,13 @@ fn denoise(
             }
             failed += 1;
             eprintln!("{}：{error:#}", job.input.display());
+        } else {
+            destinations.record(&job.output).with_context(|| {
+                format!(
+                    "输出已保存，但无法核验其文件身份，已停止后续处理：{}",
+                    job.output.display()
+                )
+            })?;
         }
     }
     if failed > 0 {
@@ -209,7 +273,7 @@ fn usage(message: String) -> anyhow::Error {
     clap::Error::raw(clap::error::ErrorKind::ArgumentConflict, message).into()
 }
 
-fn plan_jobs(args: &DenoiseArgs) -> Result<Vec<Job>> {
+fn plan_jobs(args: &DenoiseArgs) -> Result<(Vec<Job>, DestinationGuard)> {
     let mut jobs = Vec::with_capacity(args.inputs.len());
     for input in &args.inputs {
         let (output, format) = if let Some(output) = &args.output {
@@ -234,33 +298,38 @@ fn plan_jobs(args: &DenoiseArgs) -> Result<Vec<Job>> {
             format,
         });
     }
-    validate_destinations(args, &jobs)?;
-    Ok(jobs)
+    let destinations = validate_destinations(args, &jobs)?;
+    Ok((jobs, destinations))
 }
 
-fn validate_destinations(args: &DenoiseArgs, jobs: &[Job]) -> Result<()> {
-    let mut protected = HashSet::with_capacity(args.inputs.len() + 1);
-    for input in &args.inputs {
-        if input != Path::new("-") {
-            protected.insert(target_key(&identity(input)?));
+fn validate_destinations(args: &DenoiseArgs, jobs: &[Job]) -> Result<DestinationGuard> {
+    let mut guard = DestinationGuard {
+        protected_paths: HashSet::with_capacity(args.inputs.len() + 1),
+        protected_files: HashSet::with_capacity(args.inputs.len() + 1),
+        completed_files: HashSet::with_capacity(jobs.len()),
+    };
+    // Only audio INPUT "-" means stdin; --model "-" is a real file.
+    for input in args
+        .inputs
+        .iter()
+        .filter(|input| input.as_path() != Path::new("-"))
+        .chain(std::iter::once(&args.model))
+    {
+        guard.protected_paths.insert(identity(input)?);
+        if let Some(file) = existing_file_id(input)? {
+            guard.protected_files.insert(file);
         }
     }
-    // Only audio INPUT "-" means stdin; --model "-" is a real file.
-    protected.insert(target_key(&identity(&args.model)?));
     let mut targets = HashSet::with_capacity(jobs.len());
+    let mut target_files = HashSet::with_capacity(jobs.len());
     for job in jobs {
         let output = &job.output;
         if output == Path::new("-") {
             continue;
         }
-        let key = target_key(&identity(output)?);
-        if protected.contains(&key) {
-            return Err(usage(format!(
-                "输出不能覆盖本次输入或模型：{}",
-                output.display()
-            )));
-        }
-        if !targets.insert(key) {
+        let key = identity(output)?;
+        let file = guard.check_resolved(output, &key)?;
+        if !targets.insert(key) || file.is_some_and(|file| !target_files.insert(file)) {
             return Err(usage(format!(
                 "多个输入对应同一个输出：{}；请分别指定输出位置",
                 output.display()
@@ -284,7 +353,7 @@ fn validate_destinations(args: &DenoiseArgs, jobs: &[Job]) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(guard)
 }
 
 fn identity(path: &Path) -> Result<PathBuf> {
@@ -301,25 +370,17 @@ fn identity(path: &Path) -> Result<PathBuf> {
     std::path::absolute(path).with_context(|| format!("无法解析路径 {}", path.display()))
 }
 
-fn target_key(path: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        PathBuf::from(path.to_string_lossy().to_lowercase())
-    }
-    #[cfg(not(windows))]
-    {
-        path.to_owned()
-    }
-}
-
 pub fn is_cancelled(error: &anyhow::Error) -> bool {
     error.chain().any(|source| source.is::<cancel::Cancelled>())
 }
 
 pub fn is_broken_pipe(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
+        if let Some(error) = source.downcast_ref::<io::Error>() {
+            return error.kind() == io::ErrorKind::BrokenPipe;
+        }
         source
-            .downcast_ref::<io::Error>()
-            .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
+            .downcast_ref::<serde_json::Error>()
+            .is_some_and(|error| error.io_error_kind() == Some(io::ErrorKind::BrokenPipe))
     })
 }

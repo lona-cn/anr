@@ -1,5 +1,9 @@
 use anr_core::{Error, NoiseReduction, Result};
 use ort::{
+    AsPointer,
+    environment::Environment,
+    memory::Allocator,
+    ortsys,
     session::{HasSelectedOutputs, OutputSelector, RunOptions, Session, SessionInputValue},
     value::{Outlet, Tensor, TensorElementType, ValueType},
 };
@@ -31,9 +35,10 @@ const OUTPUTS: [(&str, usize); 3] = [
 pub struct DFN3 {
     session: Session,
     input_frame: Tensor<f32>,
+    // Release the non-owning output wrappers before their state allocations.
+    options: [RunOptions<HasSelectedOutputs>; 2],
     states: [Tensor<f32>; 2],
     atten_lim_db: Tensor<f32>,
-    options: [RunOptions<HasSelectedOutputs>; 2],
     input_order: [usize; 3],
     current: usize,
 }
@@ -65,9 +70,14 @@ impl DFN3 {
                 .position(|(name, _)| *name == session.inputs()[i].name())
                 .expect("validated input name")
         });
-        // from_array guarantees initialized CPU storage even with device EPs.
-        let input_frame = zeros(Self::FRAME_SIZE)?;
-        let states = [zeros(Self::STATE_SIZE)?, zeros(Self::STATE_SIZE)?];
+        // Never use the session's allocator: a custom GPU session must still
+        // receive CPU-backed inputs and preallocated outputs.
+        let allocator = Allocator::default();
+        let input_frame = zeros(&allocator, Self::FRAME_SIZE)?;
+        let mut states = [
+            zeros(&allocator, Self::STATE_SIZE)?,
+            zeros(&allocator, Self::STATE_SIZE)?,
+        ];
         let attenuation_port = session
             .inputs()
             .iter()
@@ -79,7 +89,16 @@ impl DFN3 {
         };
         let atten_lim_db =
             Tensor::from_array((attenuation_shape, vec![3.0_f32])).map_err(Error::backend)?;
-        let options = [output_options(&states[1])?, output_options(&states[0])?];
+        // SAFETY: these fixed-size allocations never resize or escape DFN3.
+        // Options are declared after states locally and before them as fields:
+        // partial construction errors and normal drop both release aliases
+        // before the buffers. No fallible work follows successful construction.
+        let options = unsafe {
+            [
+                output_options(&allocator, &mut states[1])?,
+                output_options(&allocator, &mut states[0])?,
+            ]
+        };
         Ok(Self {
             session,
             input_frame,
@@ -91,17 +110,21 @@ impl DFN3 {
         })
     }
 
-    /// Loads a model using ORT's default CPU execution provider.
+    /// Loads a model using ORT's built-in CPU execution provider.
     ///
-    /// Uses one intra-op thread and disables thread-pool spinning. Use
+    /// Uses one intra-op thread and disables thread-pool spinning, environment
+    /// execution providers, and automatic accelerator selection. Use
     /// [`Self::new`] to supply a session with different runtime settings.
+    /// The caller owns the environment; configure it with [`ort::init`] before
+    /// passing it here. Dynamic builds must prepare the runtime with
+    /// [`crate::initialize_runtime`] before creating that environment.
     ///
     /// # Errors
     /// Returns a backend error if the file cannot be loaded, or an invalid-model
     /// error if its I/O contract does not match this DFN3 export.
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn from_file(environment: &Environment, path: impl AsRef<Path>) -> Result<Self> {
         let session = (|| -> ort::Result<Session> {
-            Session::builder()?
+            cpu_session(environment)?
                 .with_no_environment_execution_providers()?
                 .with_independent_thread_pool()?
                 .with_intra_threads(1)?
@@ -198,22 +221,107 @@ impl NoiseReduction for DFN3 {
     }
 }
 
-fn zeros(size: usize) -> Result<Tensor<f32>> {
-    Tensor::from_array(([size], vec![0.0; size])).map_err(Error::backend)
+fn cpu_session(environment: &Environment) -> ort::Result<ort::session::builder::SessionBuilder> {
+    let mut builder = Session::builder(environment)?;
+    // CPU::build() only configures its arena, leaving automatic NPU selection
+    // enabled. Select the exact built-in CPU EP instead of a preferred device.
+    // Minimal ORT builds skip automatic EP selection entirely and use their
+    // built-in CPU without requiring the unsupported GetEpDevices API.
+    ort::ortsys![unsafe SessionOptionsSetEpSelectionPolicyDelegate(
+        builder.ptr_mut(),
+        Some(select_cpu),
+        std::ptr::null_mut()
+    )?];
+    Ok(builder)
 }
 
-fn output_options(next_state: &Tensor<f32>) -> Result<RunOptions<HasSelectedOutputs>> {
-    // Upgrade an owned tensor's view: shares its OrtValue, unlike Tensor::clone
-    // which would copy all 45304 values. These aliases never escape DFN3, and
-    // &mut self serializes execution, extraction, and reset.
-    let next_state = next_state
-        .view()
-        .try_upgrade()
-        .expect("owned CPU state tensor");
+unsafe extern "system" fn select_cpu(
+    devices: *const *const ort::sys::OrtEpDevice,
+    device_count: usize,
+    _model_metadata: *const ort::sys::OrtKeyValuePairs,
+    _runtime_metadata: *const ort::sys::OrtKeyValuePairs,
+    selected: *mut *const ort::sys::OrtEpDevice,
+    capacity: usize,
+    selected_count: *mut usize,
+    _state: *mut std::ffi::c_void,
+) -> ort::sys::OrtStatusPtr {
+    // SAFETY: ORT supplies valid device/name pointers and a writable count for
+    // this call. Write at most one entry within the supplied output capacity.
+    // The callback retains no pointers or Rust state and lives for the process.
+    unsafe {
+        selected_count.write(0);
+        if capacity > 0 {
+            for index in 0..device_count {
+                let device = *devices.add(index);
+                let name = (ort::api().EpDevice_EpName)(device);
+                if std::ffi::CStr::from_ptr(name).to_bytes() == b"CPUExecutionProvider" {
+                    selected.write(device);
+                    selected_count.write(1);
+                    break;
+                }
+            }
+        }
+    }
+    // A zero count is an explicit selection failure in full ORT, never a
+    // request to fall back to another device. ORT reports that failure itself.
+    ort::sys::OrtStatusPtr::default()
+}
+
+fn zeros(allocator: &Allocator, size: usize) -> Result<Tensor<f32>> {
+    let mut tensor = Tensor::<f32>::new(allocator, [size]).map_err(Error::backend)?;
+    tensor.extract_tensor_mut().1.fill(0.0);
+    Ok(tensor)
+}
+
+/// # Safety
+/// `state` must be a native CPU allocation from `allocator`, containing exactly
+/// STATE_SIZE f32 values. It must outlive the returned wrapper without resizing.
+unsafe fn state_output_alias(
+    allocator: &Allocator,
+    state: &mut Tensor<f32>,
+) -> ort::Result<Tensor<f32>> {
+    let shape = [DFN3::STATE_SIZE as i64];
+    let mut value = std::ptr::null_mut();
+    // The MemoryInfo describes this exact CPU allocation. ORT copies that
+    // description; the data pointer remains valid because DFN3 owns the buffer.
+    let memory_info = state.memory_info().ptr();
+    let data = state.data_ptr_mut();
+    // SAFETY: the fixed shape and byte length cover the initialized f32 buffer
+    // exactly. This creates only an OrtValue wrapper; ORT does not take
+    // ownership of the supplied allocation, and it does not retain shape.
+    ortsys![unsafe CreateTensorWithDataAsOrtValue(
+        memory_info,
+        data,
+        DFN3::STATE_SIZE * std::mem::size_of::<f32>(),
+        shape.as_ptr(),
+        shape.len(),
+        ort::sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+        &mut value
+    )?; nonNull(value)];
+    // SAFETY: from_ptr takes sole ownership of the newly created OrtValue
+    // wrapper, not its external buffer. This is the allocator of that buffer;
+    // DFN3 separately retains its true owner until the wrapper has been dropped.
+    // No aliases escape, and &mut self serializes inference and reset. The two
+    // ping-pong allocations keep input state distinct from output state.
+    Ok(unsafe { Tensor::from_ptr(value, Some(allocator)) })
+}
+
+/// # Safety
+/// The state allocation must satisfy state_output_alias's contract and outlive
+/// the returned RunOptions, including every temporary output from their runs.
+unsafe fn output_options(
+    allocator: &Allocator,
+    next_state: &mut Tensor<f32>,
+) -> Result<RunOptions<HasSelectedOutputs>> {
+    // SAFETY: forwarded from this function's caller.
+    let next_state =
+        unsafe { state_output_alias(allocator, next_state) }.map_err(Error::backend)?;
+    // Audio outputs are native CPU tensors owned directly by OutputSelector;
+    // unlike the state wrapper, they need no separately retained buffer owner.
     let outputs = OutputSelector::no_default()
         .with("enhanced_audio_frame")
         .with("new_states")
-        .preallocate("enhanced_audio_frame", zeros(DFN3::FRAME_SIZE)?)
+        .preallocate("enhanced_audio_frame", zeros(allocator, DFN3::FRAME_SIZE)?)
         .preallocate("new_states", next_state);
     // lsnr is not consumed by NoiseReduction; do not allocate or collect it.
     Ok(RunOptions::new()

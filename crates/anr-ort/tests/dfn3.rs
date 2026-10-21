@@ -1,11 +1,21 @@
 use anr_core::{Error, NoiseReduction};
 use anr_ort::{DFN3, ort::session::Session};
+use std::sync::LazyLock;
+
+static ENVIRONMENT: LazyLock<anr_ort::ort::environment::Environment> = LazyLock::new(|| {
+    anr_ort::initialize_runtime().unwrap();
+    anr_ort::ort::init().build().unwrap()
+});
+
+fn environment() -> &'static anr_ort::ort::environment::Environment {
+    &ENVIRONMENT
+}
 
 // A small ONNX test graph, not a DeepFilterNet model:
 // audio = input + mean(input) + mean(states); new_states = states + atten_lim_db.
 // Its deliberately reordered inputs/outputs detect positional binding mistakes.
 fn model() -> DFN3 {
-    let session = Session::builder()
+    let session = Session::builder(environment())
         .unwrap()
         .with_intra_threads(1)
         .unwrap()
@@ -18,7 +28,7 @@ fn model() -> DFN3 {
 
 #[test]
 fn scalar_attenuation_and_symbolic_audio_shape_are_supported() {
-    let session = Session::builder()
+    let session = Session::builder(environment())
         .unwrap()
         .with_intra_threads(1)
         .unwrap()
@@ -128,7 +138,7 @@ fn strength_is_bounded_and_nan_does_not_poison_inference() {
 
 #[test]
 fn rejects_an_incompatible_model_before_processing_audio() {
-    let session = Session::builder()
+    let session = Session::builder(environment())
         .unwrap()
         .with_intra_threads(1)
         .unwrap()
@@ -141,7 +151,7 @@ fn rejects_an_incompatible_model_before_processing_audio() {
 #[ignore = "requires a user-supplied DFN3 model; set ANR_DFN3_MODEL to its path"]
 fn supplied_dfn3_model_produces_finite_audio_and_reset_is_repeatable() {
     let path = std::env::var_os("ANR_DFN3_MODEL").expect("set ANR_DFN3_MODEL");
-    let mut model = DFN3::from_file(path).unwrap();
+    let mut model = DFN3::from_file(environment(), path).unwrap();
     model.set_factor(80.0);
     let input: Vec<f32> = (0..4_800)
         .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.1)

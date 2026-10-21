@@ -43,7 +43,9 @@ anr = { version = "0.1.0", features = ["ort"] }
 use anr::{DFN3, NoiseReduction, Result};
 
 fn main() -> Result<()> {
-    let mut denoiser = DFN3::from_file("models/dfn3.onnx")?;
+    anr::ort::initialize_runtime()?;
+    let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
+    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
     denoiser.set_factor(80.0);
 
     // Replace this silence with your own 48 kHz mono samples.
@@ -114,14 +116,15 @@ Adding `anr` alone does not enable model execution. Choose the Cargo features yo
 
 | Feature | What it does |
 | --- | --- |
-| `ort` | Provides `DFN3`. By default, downloads and copies the CPU ONNX Runtime libraries at build time; requires network access and platform support. |
-| `ort-load-dynamic` | Loads a runtime you supply. Set `ORT_DYLIB_PATH` to a compatible shared library file. |
+| `ort` | Provides `DFN3`. With default features enabled, the CPU runtime is downloaded and copied at build time. |
+| `ort-download-binaries` | Default download option; takes effect only when `ort` is enabled and does not enable a backend by itself. |
+| `ort-load-dynamic` | Loads your runtime. Use `default-features = false` with this feature to omit the downloader and its TLS dependencies; set `ORT_DYLIB_PATH` to the shared library file. |
 | `ort-cuda` / `ort-tensorrt` | Compiles support for CUDA / TensorRT. |
 | `ort-directml` / `ort-coreml` / `ort-xnnpack` | Compiles support for DirectML / CoreML / XNNPACK. |
 
-The project pins `ort = 2.0.0-rc.13` (API 27), without `ndarray`. If you supply a runtime, it must support API 27. Set `ORT_DYLIB_PATH` before the process first initializes ONNX Runtime; point it to a library file, not a directory.
+The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default prebuilt runtime is 1.31.0; compatible self-provided API-27 runtimes, including 1.28.0, can also be used. Set `ORT_DYLIB_PATH` before initialization; it points to a library file, not a directory.
 
-`DFN3::from_file` always uses CPU execution with one intra-op thread and disables thread-pool spinning. Enabling a GPU feature does not select the GPU or install CUDA, TensorRT, or drivers. To choose an execution provider, configure one from `anr::ort::ep` with `anr::ort::session::Session::builder()`, then pass the session to `DFN3::new(session)`.
+Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, use `anr::ort::session::Session::builder(&environment)` and pass the resulting session to `DFN3::new(session)`.
 
 ### Which crate should I use?
 
@@ -185,7 +188,9 @@ anr = { version = "0.1.0", features = ["ort"] }
 use anr::{DFN3, NoiseReduction, Result};
 
 fn main() -> Result<()> {
-    let mut denoiser = DFN3::from_file("models/dfn3.onnx")?;
+    anr::ort::initialize_runtime()?;
+    let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
+    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
     denoiser.set_factor(80.0);
 
     // 用实际的 48 kHz 单声道采样替换这段静音。
@@ -256,14 +261,15 @@ cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> 
 
 | 可选功能 | 作用 |
 | --- | --- |
-| `ort` | 提供 `DFN3`。默认在构建时下载并复制 CPU 使用的 ONNX Runtime，需要网络和目标平台支持。 |
-| `ort-load-dynamic` | 使用自己准备的 ONNX Runtime；通过 `ORT_DYLIB_PATH` 指向兼容的共享库文件。 |
+| `ort` | 提供 `DFN3`；保留默认 features 时，会在构建中下载并复制 CPU 运行库。 |
+| `ort-download-binaries` | 默认下载选项，只在启用 `ort` 后生效，本身不会启用后端。 |
+| `ort-load-dynamic` | 加载自备运行库；配合 `default-features = false` 可去掉下载器和 TLS 构建依赖，通过 `ORT_DYLIB_PATH` 指向共享库文件。 |
 | `ort-cuda` / `ort-tensorrt` | 编入 CUDA / TensorRT 支持。 |
 | `ort-directml` / `ort-coreml` / `ort-xnnpack` | 编入 DirectML / CoreML / XNNPACK 支持。 |
 
-当前固定使用 `ort = 2.0.0-rc.13`（API 27），不启用 `ndarray`。使用自己的运行库时，需要选择兼容 API 27 的版本，并在进程首次初始化 ONNX Runtime 前设置 `ORT_DYLIB_PATH`。这个变量应指向库文件，不是目录。
+当前固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也可使用兼容 API 27 的自备运行库，包括 1.28.0。动态构建需在初始化前设置 `ORT_DYLIB_PATH`，指向库文件而不是目录。
 
-`DFN3::from_file` 固定使用 CPU，以一个线程执行算子，并关闭线程池的忙等待。启用 GPU 相关功能不会自动改用 GPU，也不会安装 CUDA、TensorRT 或驱动。若要自己选择执行 provider，通过 `anr::ort::session::Session::builder()` 配置 `anr::ort::ep` 中的选项，再把建好的 session 传给 `DFN3::new(session)`。
+创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
 
 ### 四个包怎么选
 

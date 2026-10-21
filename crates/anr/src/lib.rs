@@ -8,8 +8,8 @@ pub use anr_core::{Error, NoiseReduction, Result};
 /// ONNX Runtime backend and its runtime configuration APIs.
 #[cfg(feature = "ort")]
 pub mod ort {
-    pub use anr_ort::DFN3;
     pub use anr_ort::ort::*;
+    pub use anr_ort::{DFN3, initialize_runtime};
 }
 
 #[cfg(feature = "ort")]

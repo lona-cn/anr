@@ -8,7 +8,11 @@ use std::{
 use anyhow::{Context, Result, bail, ensure};
 use symphonia::core::{
     audio::{SampleBuffer, SignalSpec},
-    codecs::{CodecParameters, Decoder, DecoderOptions},
+    codecs::{
+        CODEC_TYPE_PCM_ALAW, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_F64LE, CODEC_TYPE_PCM_MULAW,
+        CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_PCM_U8,
+        CodecParameters, Decoder, DecoderOptions,
+    },
     errors::Error as DecodeError,
     formats::{FormatOptions, FormatReader},
     io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions, ReadBytes, SeekBuffered},
@@ -285,6 +289,12 @@ struct EncodedSource {
     signal: Option<SignalSpec>,
     samples: Option<SampleBuffer<f32>>,
     sample_offset: usize,
+    // Fixed-width WAV codecs can have a reliable decoded-frame count from
+    // their declared data length, excluding unknown-size markers. Do not
+    // enforce estimated durations from other containers/codecs. Count actual
+    // decoded frames: WavReader 0.5.5 can return a short packet with the
+    // originally requested duration.
+    remaining_frames: Option<u64>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -325,6 +335,27 @@ impl EncodedSource {
             .sample_rate
             .zip(parameters.channels)
             .map(|(rate, channels)| SignalSpec::new(rate, channels));
+        // Use the encoded storage width, not valid bits or decoded sample
+        // width (A-law and mu-law decode to S16 but consume one byte).
+        let input_sample_bytes: u64 = match parameters.codec {
+            CODEC_TYPE_PCM_U8 | CODEC_TYPE_PCM_ALAW | CODEC_TYPE_PCM_MULAW => 1,
+            CODEC_TYPE_PCM_S16LE => 2,
+            CODEC_TYPE_PCM_S24LE => 3,
+            CODEC_TYPE_PCM_S32LE | CODEC_TYPE_PCM_F32LE => 4,
+            CODEC_TYPE_PCM_F64LE => 8,
+            _ => 0,
+        };
+        let input_frame_bytes = input_sample_bytes * spec.channels as u64;
+        let remaining_frames = if format_name == "wave" && input_frame_bytes != 0 {
+            // WavReader also converts the u32::MAX streaming length marker
+            // into n_frames. The original byte length/remainder is not exposed,
+            // so finite lengths in the same quotient bucket are ambiguous too.
+            parameters
+                .n_frames
+                .filter(|&frames| frames != u64::from(u32::MAX) / input_frame_bytes)
+        } else {
+            None
+        };
         let mut this = Self {
             format,
             decoder,
@@ -339,6 +370,7 @@ impl EncodedSource {
             signal,
             samples: None,
             sample_offset: 0,
+            remaining_frames,
             cancelled,
         };
         if spec.sample_rate == 0 || spec.channels == 0 {
@@ -386,6 +418,10 @@ impl EncodedSource {
                 Err(DecodeError::IoError(error))
                     if error.kind() == io::ErrorKind::UnexpectedEof =>
                 {
+                    ensure!(
+                        self.remaining_frames.is_none_or(|frames| frames == 0),
+                        "truncated WAV input: EOF before the declared audio data was complete"
+                    );
                     return Ok(false);
                 }
                 Err(DecodeError::ResetRequired) => {
@@ -403,6 +439,9 @@ impl EncodedSource {
                 .decode(&packet)
                 .map_err(decode_error)
                 .context("decoding audio packet")?;
+            if let Some(remaining) = &mut self.remaining_frames {
+                *remaining = remaining.saturating_sub(decoded.frames() as u64);
+            }
             let signal = *decoded.spec();
             ensure!(
                 signal.rate > 0 && signal.channels.count() > 0,
@@ -642,6 +681,126 @@ mod tests {
         assert_eq!(source.read_frames(&mut output).unwrap(), 3);
         assert_eq!(output[1], [-0.5; 3]);
         assert_eq!(source.read_frames(&mut output).unwrap(), 0);
+    }
+
+    #[test]
+    fn encoded_wave_rejects_eof_before_declared_audio_is_complete() {
+        for (declared_frames, missing_bytes) in [(480, 480 * 8), (4096, 4)] {
+            let mut bytes = wav_bytes(declared_frames, false);
+            bytes.truncate(bytes.len() - missing_bytes);
+            for seekable in [true, false] {
+                let input: Box<dyn MediaSource> = if seekable {
+                    Box::new(Cursor::new(bytes.clone()))
+                } else {
+                    Box::new(NonSeekSource(Mutex::new(
+                        CancellableReader::spawn(
+                            Fragmented {
+                                inner: Cursor::new(bytes.clone()),
+                                next: 1,
+                            },
+                            flag(),
+                        )
+                        .unwrap(),
+                    )))
+                };
+                let mut source = EncodedSource::open(input, flag()).unwrap();
+                let mut output = [Vec::new(), Vec::new()];
+                let mut frames = 0;
+                loop {
+                    match source.read_frames(&mut output) {
+                        Ok(0) => panic!("truncated WAV was accepted as complete"),
+                        Ok(count) => frames += count,
+                        Err(_) => break,
+                    }
+                }
+                if missing_bytes == 4 {
+                    assert!(
+                        frames > 0,
+                        "complete packets should precede the truncated tail"
+                    );
+                } else {
+                    assert_eq!(frames, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn encoded_wave_accepts_empty_and_complete_audio_at_eof() {
+        for expected_frames in [0, 3, 4096] {
+            for seekable in [true, false] {
+                let bytes = wav_bytes(expected_frames, false);
+                let input: Box<dyn MediaSource> = if seekable {
+                    Box::new(Cursor::new(bytes))
+                } else {
+                    Box::new(NonSeekSource(Mutex::new(
+                        CancellableReader::spawn(
+                            Fragmented {
+                                inner: Cursor::new(bytes),
+                                next: 1,
+                            },
+                            flag(),
+                        )
+                        .unwrap(),
+                    )))
+                };
+                let mut source = EncodedSource::open(input, flag()).unwrap();
+                let mut output = [Vec::new(), Vec::new()];
+                let mut frames = 0;
+                loop {
+                    let count = source.read_frames(&mut output).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    frames += count;
+                }
+                assert_eq!(frames, expected_frames);
+                assert_eq!(source.read_frames(&mut output).unwrap(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn encoded_wave_accepts_complete_audio_with_unknown_length_markers() {
+        for expected_frames in [0, 3, 4096] {
+            let mut bytes = wav_bytes(expected_frames, false);
+            // Hound writes the data chunk last. Replace only its length and
+            // the RIFF length, as FFmpeg does when writing WAV to a pipe.
+            let data_length = bytes.len() - expected_frames * 8 - 4;
+            bytes[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+            bytes[data_length..data_length + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            for seekable in [true, false] {
+                let input: Box<dyn MediaSource> = if seekable {
+                    Box::new(Cursor::new(bytes.clone()))
+                } else {
+                    Box::new(NonSeekSource(Mutex::new(
+                        CancellableReader::spawn(
+                            Fragmented {
+                                inner: Cursor::new(bytes.clone()),
+                                next: 1,
+                            },
+                            flag(),
+                        )
+                        .unwrap(),
+                    )))
+                };
+                let mut source = EncodedSource::open(input, flag()).unwrap();
+                let mut output = [Vec::new(), Vec::new()];
+                let mut frames = 0;
+                loop {
+                    let count = source.read_frames(&mut output).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    for (offset, (left, right)) in output[0].iter().zip(&output[1]).enumerate() {
+                        assert_eq!(*left, (frames + offset) as f32 / 10000.0);
+                        assert_eq!(*right, -0.5);
+                    }
+                    frames += count;
+                }
+                assert_eq!(frames, expected_frames);
+            }
+        }
     }
 
     #[test]

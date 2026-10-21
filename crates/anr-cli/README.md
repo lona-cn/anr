@@ -31,13 +31,13 @@ anr backends --json
 
 The executable is `anr`, not `anr-cli`. Add the installation directory to `PATH`, or run the executable by its full path. `0.1.0` is the current project version, not a claim that it has been published on crates.io. Only after that version is actually published can you install it from the registry with `cargo install anr-cli --version 0.1.0 --locked`.
 
-The default `ort` feature uses CPU ONNX Runtime. Building may download runtime libraries and requires network access, a target toolchain, and platform support:
+The default `ort-download-binaries` feature enables the ORT backend and downloads the prebuilt CPU runtime. It requires network access, a target toolchain, and platform support:
 
 - Windows: the MSVC C++ toolchain and Windows SDK.
 - Linux: C/C++ linking tools, `pkg-config`, and OpenSSL development files, such as Ubuntu's `libssl-dev`.
 - macOS: Xcode Command Line Tools.
 
-The prebuilt distribution for `ort 2.0.0-rc.13` does not include Intel macOS. On that platform, build ONNX Runtime yourself or supply a compatible shared library. Installing the Rust target alone is not enough.
+The prebuilt distribution for `ort 2.0.0-rc.15` uses ONNX Runtime 1.31.0 and does not include Intel macOS. On that platform, build ONNX Runtime yourself or supply an API-27-compatible shared library, including 1.28.0. Installing the Rust target alone is not enough.
 
 For example, once you have a compatible CPU `libonnxruntime.dylib` on Intel macOS, set its actual absolute path in the environment used to run `anr`, then install the dynamic-loading build:
 
@@ -82,10 +82,10 @@ anr backends [--json]
 | `--output-format wav\|f32le` | Inferred from `.wav` / `.f32le` for files; other extensions need an explicit format. Stdout requires explicit `f32le`. |
 | `--output-rate HZ` | Optional positive sample rate. Defaults to the input rate. |
 | `--wav-format pcm16\|pcm24\|float32` | Defaults to PCM16. Cannot be explicitly set for raw output. |
-| `--overwrite` | Allows replacing an existing output after processing finishes. Never allows overwriting any input in the current run. |
+| `--overwrite` | Allows replacing an existing output after processing finishes. Never permits replacing an input, model, or a result already completed in this batch. |
 | `--quiet` / `--verbose` | Mutually exclusive global options for stderr diagnostics. Do not change audio stdout. |
 
-Before writing output, batch processing checks global arguments, the model and provider, and explicit destination conflicts. The model instance is reused between files, with state reset before each new file. If one file fails, its temporary output is removed and the remaining files continue. The final exit code is 1; files that already succeeded remain. There is no whole-batch rollback.
+Before writing output, batch processing checks global arguments, the model/provider, and resolvable destination conflicts. Actual file identities are checked again before processing and before committing, including case-insensitive aliases. If a previously nonexistent alias is discovered after an earlier batch result was saved, the later file fails instead of replacing that result. The model is reused with state reset between files. Failed files remove their temporary output and processing continues; the final exit code is 1 and successful files remain. If a saved file's identity cannot be verified, the CLI reports that it was saved and stops further processing. There is no whole-batch rollback.
 
 Each file is first written to a temporary file in the destination directory. It is moved to the final path only after inference, encoding, and WAV finalization finish. Existing files are not overwritten by default; even with `--overwrite`, the old file is not truncated before processing. This does not guarantee durability through power loss. Bytes already written to stdout cannot be taken back. Check the exit code and stderr before treating a stream as complete.
 
@@ -94,6 +94,8 @@ Each file is first written to a temporary file in the destination directory. It 
 Input decoding and container detection use Symphonia 0.5.5 with its `all` features, including WAV/PCM, FLAC, MP3, Ogg/Vorbis, and AAC-LC/M4A support. **Recognizing a container does not mean every codec or profile inside it is supported.** Opus, for example, is not in the current codec set. Individual files still have to decode successfully; this list is not a claim that every encoding variant or platform has been tested.
 
 For files with multiple tracks, the first decodable audio track is selected. `inspect` reports the selected track, sample rate, channels, and other details. Its JSON fields are `format`, `codec`, `track_id`, `sample_rate`, `channels`, `frames`, and `duration_seconds`; unknown frame counts or durations are `null`. Changes in sample rate or channel count during processing are rejected. Encoded, non-seekable stdin is also subject to demuxer limitations: inputs that need seeking may fail. The CLI does not work around this by buffering the whole input or silently writing it to disk.
+
+Fixed-width WAV audio with a reliable declared frame count is checked against the frames actually decoded. Premature EOF is an error and cannot commit a short replacement. Unknown-length WAV markers remain streamable; estimated durations from compressed formats are not treated as exact integrity budgets. This is not a guarantee that every damaged container or codec can be detected.
 
 Output is PCM16, PCM24, or float32 WAV, or raw f32le. There is no MP3/AAC encoder. WAV output contains the necessary audio headers and samples; it does not promise to preserve cover art, tags, chapters, or special channel-layout markers. Integer WAV samples are clamped to their representable range. Non-finite samples are errors.
 
@@ -151,11 +153,11 @@ cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
 ```
 
-Without default features, the CLI can still list compiled support and inspect audio, but cannot denoise with ORT. CLI features forward to `anr`: `ort`, `ort-load-dynamic`, `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, and `ort-xnnpack`. CUDA/TensorRT, DirectML, CoreML, and XNNPACK each need the appropriate platform, libraries, or drivers. Enabling a feature does not install them.
+With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. CUDA/TensorRT, DirectML, CoreML, and XNNPACK flags forward to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them.
 
 For example, build with DirectML on Windows and select `--provider directml`, or build with CoreML on macOS and select `--provider coreml`. The default remains `cpu`. Explicit provider registration or initialization failures are errors. CUDA, TensorRT, DirectML, and CoreML cannot silently fall back to CPU for the whole graph; unsupported operators may cause a failure. XNNPACK is itself a CPU provider and allows ordinary CPU kernels to handle operators it doesn't support. It does not promise to run every operator through XNNPACK. In `backends --json`, `compiled` means support was built in; `runtime_available: null` means runtime availability has not been checked, not that a model has run successfully.
 
-For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to a shared library **file** that supports API 27, not a directory. To link against your own runtime instead, set `ORT_LIB_LOCATION` to the library directory and `ORT_PREFER_DYNAMIC_LINK=1` for shared linking; configure the system's shared-library search path at runtime too. Distribute the required runtime libraries and notices with the program. Copying the executable alone is not enough for every build configuration.
+For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
 
 ### What has been tested
 
@@ -163,7 +165,7 @@ CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x6
 
 The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
 
-Earlier local checks recorded workspace tests and real DFN3 inference on Windows x64 / Rust 1.88 and WSL Ubuntu 24.04 x64 / Rust 1.99, including installed runs from unrelated working directories. Windows console cancellation and Linux SIGINT preserved existing outputs and removed the current temporary file. **macOS has not been run, and the GitHub Actions jobs have not been executed.** The local results do not stand in for those runs.
+Current local publishing-safety checks use Rust 1.99 on Windows x64 (65 tests) and WSL Ubuntu 24.04 x64 (66 tests), including real DFN3 inference. The no-backend CLI has 38 passing tests. Three isolated dynamic-runtime tests cover repeated failure, recovery with inference, and reuse without changing the host environment; separate CLI checks cover missing-library errors through CPU and XNNPACK paths. The installed release also ran from an unrelated directory: 48,001 samples through the real model, unknown-length WAV stdin, closed JSON stdout, and protected case aliases. Both failure smoke paths preserved the existing target without temporary files. Earlier Windows console-cancellation checks and current Linux SIGINT checks preserved outputs. Earlier Rust 1.88 results predate the ORT upgrade and do not establish compatibility with the current code. **macOS, real minimal runtimes, GPU/NPU hardware, and GitHub Actions jobs have not been run.** Local results do not stand in for those runs.
 
 ### License and redistribution
 
@@ -200,13 +202,13 @@ anr backends --json
 
 二进制名是 `anr`，不是 `anr-cli`。把安装目录加入 `PATH`，或用完整路径运行可执行文件。`0.1.0` 是当前项目版本，不代表它已经上传 crates.io。只有该版本实际发布后，才可用 `cargo install anr-cli --version 0.1.0 --locked` 从 registry 安装。
 
-默认 feature `ort` 使用 CPU ONNX Runtime，构建可能下载运行库，需要联网、目标工具链和平台支持：
+默认 feature `ort-download-binaries` 会启用 ORT 后端并下载预编译 CPU 运行库，需要网络、目标工具链和平台支持：
 
 - Windows：MSVC C++ 工具链和 Windows SDK。
 - Linux：C/C++ 链接工具链、`pkg-config` 和 OpenSSL 开发文件，例如 Ubuntu 的 `libssl-dev`。
 - macOS：Xcode Command Line Tools。
 
-当前 `ort 2.0.0-rc.13` 的预编译分发不包含 Intel macOS。该平台需要自己构建 ONNX Runtime，或使用兼容的共享库；只安装 Rust target 不够。
+当前 `ort 2.0.0-rc.15` 的默认预编译运行库为 1.31.0，不包含 Intel macOS。该平台需自行构建，或使用兼容 API 27 的共享库，包括 1.28.0；只安装 Rust target 不够。
 
 例如，在 Intel macOS 上准备好兼容的 CPU `libonnxruntime.dylib` 后，在运行 `anr` 的环境里设置实际绝对路径，再安装动态加载版本：
 
@@ -251,10 +253,10 @@ anr backends [--json]
 | `--output-format wav\|f32le` | 文件可由 `.wav` / `.f32le` 扩展名识别；其他扩展名须明确指定。stdout 必须明确选 `f32le`。 |
 | `--output-rate HZ` | 可选正采样率；默认保留输入采样率。 |
 | `--wav-format pcm16\|pcm24\|float32` | 默认 PCM16；raw 输出不能显式指定此参数。 |
-| `--overwrite` | 允许处理完成后替换已有目标，仍禁止覆盖本次任意输入。 |
+| `--overwrite` | 允许处理完成后替换已有目标，仍禁止覆盖输入、模型或本批次已经成功保存的结果。 |
 | `--quiet` / `--verbose` | 互斥的全局选项，控制 stderr 诊断，不改变音频 stdout。 |
 
-批处理在开始输出前检查全局参数、模型、provider 和明确的目标冲突。文件间复用模型实例，但每个新文件开始时会重置状态。单个文件失败会清理该文件的临时输出，继续其余文件，最终退出码为 1；之前成功的文件保留，不会撤销整批结果。
+批处理在开始输出前检查全局参数、模型/provider 和可确定的目标冲突，并在处理前及提交前复核实际文件身份，包括大小写不敏感文件系统的别名。如果先前不存在的别名在本批次较早的结果保存后才显现，后一个文件会失败，不会覆盖先前结果。模型复用但文件间重置状态；失败文件清理临时输出并继续，最终退出 1，成功文件保留。若文件已经保存但无法核验其身份，会明确报告已保存并停止后续处理；不撤销整批结果。
 
 文件先写到目标同目录的临时文件，推理、编码和 WAV 文件收尾全部完成后才移到最终路径。默认不覆盖；即使使用 `--overwrite`，也不会在开始处理前截断旧文件。这不保证断电后数据仍然完整。stdout 已发出的字节无法撤回；失败时必须检查退出码和 stderr，不能把部分音频流当完整结果。
 
@@ -263,6 +265,8 @@ anr backends [--json]
 带头输入使用 Symphonia 0.5.5 的解码器和容器探测，启用其 `all` features，包括 WAV/PCM、FLAC、MP3、Ogg/Vorbis、AAC-LC/M4A 等支持。**容器可识别，不代表里面所有 codec/profile 都能解码。** 例如 Opus 不在当前 codec 集合内。具体文件仍以解码结果为准；这里没有声称所有编码变体或平台都已实测通过。
 
 多音轨默认选择第一个可解码音轨；`inspect` 显示所选音轨、采样率、声道等信息。JSON 字段为 `format`、`codec`、`track_id`、`sample_rate`、`channels`、`frames`、`duration_seconds`；未知帧数或时长为 `null`。处理过程中改变采样率或声道数会报错。不可 seek 的编码 stdin 还受 demuxer 限制，需要 seek 的输入可能失败；CLI 不会因此缓存整条输入或暗中写入磁盘。
+
+对有可靠声明帧数的固定宽度 WAV，按实际解码帧数校验完整性；提前 EOF 会报错，不能提交短音频替换旧目标。未知长度 WAV 标记仍允许流式读取，压缩格式的估算时长不作为精确校验预算。这不表示能够发现每一种容器或 codec 损坏。
 
 输出是 PCM16、PCM24 或 float32 WAV，或 raw f32le；不提供 MP3/AAC 编码。WAV 只写必要音频头和采样，不承诺保留封面、标签、章节或特殊声道布局标记。整数 WAV 会限制到可表示范围；非有限采样会报错。
 
@@ -320,11 +324,11 @@ cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
 ```
 
-不启用默认 feature 时，仍可列出编译时加入的支持、检查音频，但不能通过 ORT 降噪。CLI 的同名 feature 转发到 `anr`：`ort`、`ort-load-dynamic`、`ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack`。CUDA/TensorRT、DirectML、CoreML 和 XNNPACK 分别需要相应平台、运行库或驱动；启用 feature 不会安装这些依赖。
+完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。CUDA/TensorRT、DirectML、CoreML、XNNPACK 等 flag 转发到 `anr`，需要对应平台、库和驱动；选择 feature 不会安装它们。
 
 例如，在 Windows 编入 DirectML 后选择 `--provider directml`，在 macOS 编入 CoreML 后选择 `--provider coreml`。默认仍为 `cpu`。明确指定的 provider 注册或初始化失败会报错；CUDA、TensorRT、DirectML、CoreML 不会在整张图无法执行时静默改用 CPU，遇到不支持的算子可能直接失败。XNNPACK 本身是 CPU provider，允许普通 CPU kernel 处理它不支持的算子，不代表全部算子都由 XNNPACK 运行。`backends --json` 中，`compiled` 只表示编译时加入了支持；`runtime_available: null` 表示尚未检查运行时可用性，不代表模型成功运行。
 
-动态加载构建需在启动前设置 `ORT_DYLIB_PATH`，指向兼容 API 27 的共享库**文件**，不是目录。若要链接自备运行库，可用 `ORT_LIB_LOCATION` 指向库目录，并以 `ORT_PREFER_DYNAMIC_LINK=1` 选择共享库；运行时还需配置系统动态库搜索路径。分发时随程序提供必要的运行库和适用通知，不能认为所有构建方式都只需复制可执行文件。
+动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
 
 ### 哪些已经测过
 
@@ -332,7 +336,7 @@ CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（
 
 自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
 
-此前的本地检查记录了 Windows x64 / Rust 1.88 与 WSL Ubuntu 24.04 x64 / Rust 1.99 上的工作区测试和真实 DFN3 推理，也验证了安装后从无关工作目录运行。Windows 控制台取消和 Linux SIGINT 均保留原目标、清理当前临时文件。**macOS 尚未实跑，GitHub Actions jobs 也尚未执行。** 本地结果不能代替这些运行。
+本轮发布安全检查在 Rust 1.99 上通过：Windows x64 65 项、WSL Ubuntu 24.04 x64 66 项，包含真实 DFN3 推理；无后端 CLI 38 项。三项独立进程动态运行库回归覆盖重复失败、恢复后推理和不改宿主环境的复用；另验 CPU/XNNPACK 路径的缺库错误。安装后的 release 从无关目录完成真实模型 48,001 个采样、未知长度 WAV stdin、JSON stdout 提前关闭和大小写别名保护；两种失败 smoke 均保留旧目标且无临时文件。此前 Windows 控制台取消检查和本轮 Linux SIGINT 检查均保留输出。旧的 Rust 1.88 结果早于 ORT 升级，不代表当前代码兼容旧工具链。**macOS、真实 minimal runtime、GPU/NPU 硬件及 GitHub Actions jobs 尚未实跑。** 本地结果不能代替这些运行。
 
 ### 许可与再分发
 

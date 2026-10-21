@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
     let input: Vec<f32> = samples.iter().copied().map(f32::from_le_bytes).collect();
-    let mut model = DFN3::from_file(&args[1])?;
+    anr::ort::initialize_runtime()?;
+    let environment = anr::ort::init().build()?;
+    let mut model = DFN3::from_file(&environment, &args[1])?;
     model.set_factor(80.0);
     let mut output = vec![0.0; input.len()];
     let reducer: &mut dyn NoiseReduction = &mut model;
