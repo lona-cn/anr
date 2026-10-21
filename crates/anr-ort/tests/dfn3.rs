@@ -133,7 +133,8 @@ fn strength_is_bounded_and_nan_does_not_poison_inference() {
     model.set_atten_lim_db(f32::INFINITY);
     model.run(48_000, &[1.0; 480], &mut output).unwrap();
     model.run(48_000, &[1.0; 480], &mut output).unwrap();
-    assert_eq!(output, [62.0; 480]);
+    // The state mean can round differently across CPU reduction kernels.
+    assert!(output.iter().all(|&sample| (sample - 62.0).abs() < 1e-5));
 }
 
 #[test]
