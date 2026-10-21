@@ -162,6 +162,7 @@ fn assert_code(output: &Output, expected: i32) {
 #[cfg(any(
     feature = "ort",
     feature = "gl",
+    feature = "gles",
     feature = "vk",
     feature = "wgpu",
     feature = "dx"
@@ -219,6 +220,7 @@ fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32]) {
 #[cfg(any(
     feature = "ort",
     feature = "gl",
+    feature = "gles",
     feature = "vk",
     feature = "wgpu",
     feature = "dx"
@@ -295,6 +297,7 @@ fn backend_inventory_is_json_without_loading_a_model() {
     }
     for (name, compiled) in [
         ("gl", cfg!(feature = "gl")),
+        ("gles", cfg!(feature = "gles")),
         ("vk", cfg!(feature = "vk")),
         ("wgpu", cfg!(feature = "wgpu")),
         ("dx", cfg!(feature = "dx")),
@@ -1120,6 +1123,7 @@ fn publish_missing_dynamic_runtime_returns_error_without_touching_output() {
 fn compute_backends() -> impl Iterator<Item = &'static str> {
     [
         ("gl", cfg!(feature = "gl")),
+        ("gles", cfg!(feature = "gles")),
         ("vk", cfg!(feature = "vk")),
         ("wgpu", cfg!(feature = "wgpu")),
         ("dx", cfg!(feature = "dx")),
@@ -1133,7 +1137,7 @@ fn compute_rejects_an_explicit_ort_provider_before_creating_output() {
     let dir = tempfile::tempdir().unwrap();
     let model = model(dir.path());
     let output = dir.path().join("never-created.f32le");
-    for backend in ["gl", "vk", "wgpu", "dx"] {
+    for backend in ["gl", "gles", "vk", "wgpu", "dx"] {
         for provider in ["cpu", "cuda"] {
             let result = run(
                 raw_command(&model, Path::new("-"), &output, 1).args([
@@ -1157,14 +1161,20 @@ fn compute_rejects_an_explicit_ort_provider_before_creating_output() {
     }
 }
 
-#[cfg(not(all(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx")))]
+#[cfg(not(all(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+)))]
 #[test]
 fn compute_without_feature_fails_without_an_implicit_cpu_provider() {
     let dir = tempfile::tempdir().unwrap();
     let model = model(dir.path());
     let output = dir.path().join("never-created.f32le");
     let before = directory_names(dir.path());
-    for backend in ["gl", "vk", "wgpu", "dx"]
+    for backend in ["gl", "gles", "vk", "wgpu", "dx"]
         .into_iter()
         .filter(|name| !compute_backends().any(|compiled| compiled == *name))
     {
@@ -1181,7 +1191,13 @@ fn compute_without_feature_fails_without_an_implicit_cpu_provider() {
     }
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 #[test]
 fn compute_rejects_a_nonmatching_model_before_touching_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -1205,14 +1221,26 @@ fn compute_rejects_a_nonmatching_model_before_touching_output() {
     }
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 fn compute_model() -> PathBuf {
     std::env::var_os("ANR_DFN3_MODEL")
         .map(PathBuf::from)
         .expect("set ANR_DFN3_MODEL to the supported original dfn3.onnx")
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 fn decode_raw(data: &[u8]) -> Vec<f32> {
     assert_eq!(data.len() % 4, 0);
     data.as_chunks::<4>()
@@ -1226,7 +1254,13 @@ fn decode_raw(data: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 fn compute_signal() -> Vec<f32> {
     (0..1927)
         .map(|index| {
@@ -1237,7 +1271,13 @@ fn compute_signal() -> Vec<f32> {
         .collect()
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 #[test]
 #[ignore = "requires ANR_DFN3_MODEL and hardware for each compiled compute backend"]
 fn compute_raw_stereo_and_wav_preserve_length_and_independent_channel_state() {
@@ -1309,7 +1349,13 @@ fn compute_raw_stereo_and_wav_preserve_length_and_independent_channel_state() {
     }
 }
 
-#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+#[cfg(any(
+    feature = "gl",
+    feature = "gles",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 #[test]
 #[ignore = "requires ANR_DFN3_MODEL and hardware for each compiled compute backend"]
 fn compute_batch_resets_state_and_strength_changes_real_audio() {

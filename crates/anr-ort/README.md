@@ -8,15 +8,17 @@
 
 It does not read microphones, decode audio files, or resample. Requires the **latest stable Rust toolchain**. Bring your own model: models are not included in the Rust packages or downloaded automatically.
 
+This is specifically the ORT implementation. For OpenGL, GLES, Vulkan, wgpu, or native D3D12 without ONNX Runtime, choose a compute feature of the [`anr` facade](../anr/README.md#compute-backends-without-ort). Those backends use `DFN3::from_file(path)` without an ORT environment and require the fixed model hash; they are not ORT execution providers.
+
 ### Denoise your first samples
 
 ```toml
 [dependencies]
-anr-core = "0.1.0"
-anr-ort = "0.1.0"
+anr-core = "0.1.1"
+anr-ort = "0.1.1"
 ```
 
-`0.1.0` is the project version, not a claim that it is published on crates.io or that the package name is reserved. To use a local checkout, replace the version dependencies with `path` dependencies pointing to the crate directories.
+The dependency examples use version `0.1.1`. To use a local checkout, replace the version dependencies with `path` dependencies pointing to the crate directories.
 
 ```rust,no_run
 use anr_core::{NoiseReduction, Result};
@@ -52,7 +54,7 @@ The library does not compensate for model latency and has no end-of-stream flush
 - Use a sample rate of 48,000 Hz.
 - Allocate an output slice with the same length as the input.
 
-If any of these checks fail, the output and processing state stay unchanged. An error during model execution may leave both partly updated; it does not undo work already done.
+If any of these checks fail, the output and processing state stay unchanged. An error during model execution may leave both partly updated; it does not undo work already done. Call `reset()` before reusing the stream after an inference failure; recreate the instance if the underlying runtime or session can no longer run.
 
 ### Adjust the strength
 
@@ -61,6 +63,8 @@ If any of these checks fail, the output and processing state stay unchanged. An 
 Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive and negative infinity use the upper and lower bounds respectively.
 
 `set_factor` rounds to whole dB, while `set_atten_lim_db` keeps fractional values. `factor()` converts the actual dB setting back and rounds it, so it may not return exactly what you passed in. These values limit how much the model may attenuate sound; they are not a mix between the original and denoised audio.
+
+`set_factor(0.0)` still executes the ONNX graph. The supplied DFN3 model's zero-attenuation branch is not an audio bypass; skip the reducer in your application if you need unchanged input. The dB setters/getters above are specific to this ORT type, not methods of the shared trait or compute frontends.
 
 ### Required model inputs and outputs
 
@@ -79,6 +83,8 @@ A one-dimensional tensor may declare a symbolic length. Loading checks the rank 
 
 Audio and state outputs use preallocated buffers, and ONNX Runtime checks their actual lengths. For `lsnr`, only the declared type and shape are checked; its result is neither read nor returned. Extra inputs or outputs, different ranks, or a different meaning or ordering of state values require changes to the implementation. Passing these checks does not prove the model is correct or that it will sound good on your audio.
 
+Unlike the compute backends, `anr-ort` does not pin the file to one SHA-256 value. It validates the port types/shapes above, but the graph must also use the expected state layout and attenuation semantics. Equal port shapes alone do not establish semantic compatibility.
+
 ### Download the CPU runtime or supply your own
 
 `anr_ort::ort` exposes the ONNX Runtime types used by this crate. The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. The default prebuilt runtime is 1.31.0; API-27-compatible self-provided libraries such as 1.28.0 are also supported.
@@ -86,7 +92,7 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 The default `download-binaries` feature downloads and copies the CPU runtime libraries at build time, requiring network access and platform support. To use a runtime you already have, disable default features and enable `load-dynamic`:
 
 ```toml
-anr-ort = { version = "0.1.0", default-features = false, features = ["load-dynamic"] }
+anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
 ```
 
 Before building an environment, call `anr_ort::initialize_runtime()` to load `ORT_DYLIB_PATH` through the fallible loader. The variable points to an API-27-compatible shared library file, not a directory; unset or empty uses the platform's default name. Failed loads can be retried, and a loaded library is reused. This function does not build an environment or replace the host's settings. Build and keep one `Environment` in your application and share it between models. Disabling defaults removes the downloader and its TLS/OpenSSL build dependencies.
@@ -96,6 +102,8 @@ Before building an environment, call `anr_ort::initialize_runtime()` to load `OR
 `cuda`, `tensorrt`, `directml`, `coreml`, and `xnnpack` compile support for the corresponding libraries. They do not select a device or install drivers or other required libraries.
 
 `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, use `anr_ort::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
+
+In the facade, `ort-directml` compiles support for ORT's DirectML provider; `dx` exposes the separate native D3D12 implementation. Similarly, `gl`, `gles`, `vk`, and `wgpu` are features of the facade, not features of `anr-ort`. Use [`anr-cli`](../anr-cli/README.md) for file decoding, resampling, per-channel processing, and explicit backend/provider selection.
 
 ### License
 
@@ -109,15 +117,17 @@ Check model weights and ONNX files separately for use and redistribution rights.
 
 它不读取麦克风、不解码音频文件，也不转换采样率。需要 **最新 Rust stable 工具链**。模型由你准备，不随 Rust 包提供，也不会自动下载。
 
+本包专门提供 ORT 实现。若要不依赖 ONNX Runtime 的 OpenGL、GLES、Vulkan、wgpu 或原生 D3D12，请选择 [`anr` 的 Compute feature](../anr/README.md#不使用-ort-的-compute-后端)。它们使用不带 ORT 环境的 `DFN3::from_file(path)`，并要求固定模型摘要，不是 ORT execution provider。
+
 ### 先完成一次降噪
 
 ```toml
 [dependencies]
-anr-core = "0.1.0"
-anr-ort = "0.1.0"
+anr-core = "0.1.1"
+anr-ort = "0.1.1"
 ```
 
-这里的 `0.1.0` 是项目版本号，不表示它已经在 crates.io 发布，也不表示包名已被保留。使用本地源码时，可以把版本依赖改成指向对应 crate 目录的 `path` 依赖。
+依赖示例使用 `0.1.1`。使用本地源码时，可以把版本依赖改成指向对应 crate 目录的 `path` 依赖。
 
 ```rust,no_run
 use anr_core::{NoiseReduction, Result};
@@ -153,7 +163,7 @@ fn main() -> Result<()> {
 - 采样率必须是 48,000 Hz。
 - 输出数组由你分配，长度必须与输入相同。
 
-这三项检查失败时，输出和处理状态都不会改变。如果运行模型时才出错，输出和状态可能已经部分更新，不会撤销已经完成的处理。
+这三项检查失败时，输出和处理状态都不会改变。如果运行模型时才出错，输出和状态可能已经部分更新，不会撤销已经完成的处理。推理失败后再次使用前应调用 `reset()`；运行库或 session 已无法执行时，应重新创建实例。
 
 ### 调整降噪强度
 
@@ -162,6 +172,8 @@ fn main() -> Result<()> {
 超出范围的值会被限制到最近的上限或下限；`NaN` 不改变当前设置，正无穷按上限处理，负无穷按下限处理。
 
 `set_factor` 换算出的分贝值会取整，`set_atten_lim_db` 则保留小数。`factor()` 根据实际分贝设置换算并取整，读回的值可能与传入值略有不同。这些数值限制的是模型压低声音的幅度，不是原音与降噪后音频的混合比例。
+
+`set_factor(0.0)` 仍然运行 ONNX 图，所提供 DFN3 模型的零衰减分支不表示原音旁路。若需要原样返回输入，应由应用跳过降噪器。上述分贝 setter/getter 仅属于本 ORT 类型，不是通用 trait 或 Compute 前端的方法。
 
 ### 模型必须有这六个输入和输出
 
@@ -180,6 +192,8 @@ fn main() -> Result<()> {
 
 音频和状态输出会写入事先分配的空间，ONNX Runtime 会检查实际长度。`lsnr` 只检查模型声明的类型和大小，不读取或返回计算结果。如果模型有额外输入输出、数组维数不同，或状态值的含义和顺序不同，就需要修改实现，不能直接使用。检查通过也不能证明模型本身正确，或降噪效果符合你的需要。
 
+与 Compute 后端不同，`anr-ort` 不将文件限定为一个 SHA-256 摘要；它检查上述端口类型和形状，但模型仍须采用预期的状态布局与衰减语义。端口形状相同不能单独证明语义兼容。
+
 ### 默认下载 CPU 运行库，也可以使用自己的运行库
 
 本包通过 `anr_ort::ort` 提供所用版本的运行库类型，固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也支持兼容 API 27 的自备库，例如 1.28.0。
@@ -187,7 +201,7 @@ fn main() -> Result<()> {
 默认启用 `download-binaries`，在构建时下载并复制 CPU 使用的 ONNX Runtime，需要网络和目标平台支持。如果已经准备好运行库，可以关闭默认功能，改用 `load-dynamic`：
 
 ```toml
-anr-ort = { version = "0.1.0", default-features = false, features = ["load-dynamic"] }
+anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
 ```
 
 创建环境前调用 `anr_ort::initialize_runtime()`，通过可返回错误的入口加载 `ORT_DYLIB_PATH`。变量应指向兼容 API 27 的共享库文件，不是目录；未设置或为空时使用平台默认库名。加载失败后可以重试，已加载的库会复用。这个函数不创建环境或替换宿主设置；应用自行创建并持有一个 `Environment`，供模型共享。关闭 defaults 后不再引入下载器及 TLS/OpenSSL 构建依赖。
@@ -197,6 +211,8 @@ anr-ort = { version = "0.1.0", default-features = false, features = ["load-dynam
 `cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` 编入对应库的支持，不会自动选择设备，也不会安装驱动或其他必需的库。
 
 `DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，用 `anr_ort::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+
+facade 的 `ort-directml` 编入 ORT DirectML provider 支持，`dx` 提供另一套原生 D3D12 实现。`gl`、`gles`、`vk`、`wgpu` 同样属于 facade，不是 `anr-ort` 的 features。文件解码、重采样、按声道处理及明确的后端/provider 选择，见 [`anr-cli`](../anr-cli/README.md)。
 
 ### 许可
 

@@ -143,7 +143,7 @@ jobs:
       - name: Run CLI without inference backend
         run: cargo test --locked -p anr-cli --no-default-features
       - name: Run compute CLI tests without requiring GPU hardware
-        run: cargo test --locked -p anr-cli --no-default-features --features gl,vk,wgpu,dx
+        run: cargo test --locked -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
       - name: Formatting and lint gate
         run: |
           cargo fmt --all -- --check

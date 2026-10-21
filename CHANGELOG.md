@@ -1,10 +1,13 @@
 # 变更记录
 
-## 未发布
+## 0.1.1
 
+- 新增 `anr-gles`、`gles` feature 和 `--backend gles`：复用 GL 执行器及统一 WGSL，生成 GLSL ES 310，强制原生 ES 3.1+ context，不退回桌面 GL、ORT 或 CPU。Windows 使用 WGL ES profile，Linux 使用硬件 EGL pbuffer；尚未提供 Android/WebGL/macOS context。
+- GLES 使用 fence 后映射当前输出帧，不调用桌面专用 `glGetBufferSubData`；检查原生 `glUnmapBuffer` 返回值。共享内存要求按 FFT 的实际 15,360 字节检查，不再错误要求 ES 设备提供 32 KiB。
+- GLES 已在 Windows / RTX 2080 Ti 上通过 61 帧独立数值基准、GLES-only 及混合后端 CLI 验收；用户录音输出与原 GL 文件摘要一致。WSL Ubuntu 24.04 的 GLES-only 编译、非 GPU 测试和 Clippy 通过，未宣称 Linux 或移动端 GPU 已验证。
 - 新增固定 DFN3 模型的原生 `anr-gl`、`anr-vk`、`anr-dx` 与独立 `anr-wgpu` 后端，均不依赖 ONNX Runtime；原 ONNX 仅作为按 SHA-256 校验的参数容器。DX 为原生 D3D12，不是 DirectML；VK/DX 不经 wgpu。
 - 新增 `anr-dfn3` 共用权重布局、固定执行顺序、工作线程和 WGSL 算子，通过 Naga 生成 GLSL、SPIR-V、HLSL；FFT、特征归一化、卷积、分组线性、五个 GRU、频谱滤波和 overlap-add 全在 GPU 执行，保留 960 点混合基 FFT、常驻权重与双状态缓冲。
-- facade 增加 `gl`、`vk`、`wgpu`、`dx` features 和对应模块的 `DFN3`；CLI 接入 `--backend ort|gl|vk|wgpu|dx`，`--provider` 仅适用于 ORT。默认构建和 Release ZIP 仍使用 ORT。
+- facade 增加 `gl`、`gles`、`vk`、`wgpu`、`dx` features 和对应模块的 `DFN3`；CLI 接入 `--backend ort|gl|gles|vk|wgpu|dx`，`--provider` 仅适用于 ORT。默认构建和 Release ZIP 仍使用 ORT。
 - 四种后端在原生 Windows / RTX 2080 Ti 上通过独立 ONNX 连续帧数值基准、跨线程使用、强度切换、尾帧、无效输入、reset，以及真实 raw/WAV、独立立体声与批处理验收。WSL Ubuntu 24.04 通过 Compute-only 编译和 44 项非 GPU 测试，6 项硬件测试保留 ignored；Linux GPU 路径和 macOS 未验证。
 - CI 分开运行普通工作区测试和 ORT 的真实模型测试，新增 Compute-only CLI 非 GPU 验收；不再在无 GPU runner 上强行运行标为 ignored 的硬件测试。
 

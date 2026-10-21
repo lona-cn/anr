@@ -5,6 +5,7 @@
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+use crate::GlApi;
 use anr_core::Result;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use glow::HasContext;
@@ -14,6 +15,9 @@ use glutin::prelude::*;
 
 pub(crate) struct GlContext {
     pub(crate) gl: glow::Context,
+    // glow 0.16 discards glUnmapBuffer's GLboolean. Keep the native entry point
+    // to detect corrupted GLES readback rather than silently accepting it.
+    unmap_buffer: Option<unsafe extern "system" fn(u32) -> u8>,
     // Fields are dropped in declaration order: dispatch table, context/surface,
     // native window. Rc prevents Send and Sync even if dependency types change.
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -22,12 +26,12 @@ pub(crate) struct GlContext {
 }
 
 impl GlContext {
-    pub(crate) fn new() -> Result<Self> {
+    pub(crate) fn new(api: GlApi) -> Result<Self> {
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             use std::ffi::CString;
 
-            let native = native::NativeContext::new()?;
+            let native = native::NativeContext::new(api)?;
             // WGL exposes modern entry points only after make_current. Reject
             // missing essential functions before glow can try calling them.
             for name in [
@@ -39,14 +43,39 @@ impl GlContext {
                 "glDispatchCompute",
                 "glMemoryBarrier",
                 "glBindBufferBase",
-            ] {
+                "glFenceSync",
+                "glClientWaitSync",
+                "glDeleteSync",
+            ]
+            .into_iter()
+            .chain(
+                match api {
+                    GlApi::Desktop => &["glGetBufferSubData"][..],
+                    GlApi::Gles => &["glMapBufferRange", "glUnmapBuffer"][..],
+                }
+                .iter()
+                .copied(),
+            ) {
                 let symbol = CString::new(name).expect("literal GL symbol has no NUL");
                 if native.proc_address(&symbol).is_null() {
                     return Err(crate::backend(format!(
-                        "缺少 OpenGL 4.3 Compute 入口：{name}"
+                        "缺少原生 {api:?} Compute 入口：{name}"
                     )));
                 }
             }
+            let unmap_buffer = if api == GlApi::Gles {
+                let symbol = CString::new("glUnmapBuffer").expect("literal GL symbol has no NUL");
+                // SAFETY: the ES core entry point was checked above, and the
+                // system ABI/GLenum/GLboolean match its native C declaration.
+                Some(unsafe {
+                    std::mem::transmute::<
+                        *const std::ffi::c_void,
+                        unsafe extern "system" fn(u32) -> u8,
+                    >(native.proc_address(&symbol))
+                })
+            } else {
+                None
+            };
             // SAFETY: native owns a current context on this thread and remains
             // alive until after the dispatch table is dropped.
             let gl = unsafe {
@@ -59,36 +88,47 @@ impl GlContext {
             // queries, so failure also unbinds and destroys the current context.
             let owner = Self {
                 gl,
+                unmap_buffer,
                 _native: native,
                 _thread_local: PhantomData,
             };
-            owner.validate()?;
+            owner.validate(api)?;
             Ok(owner)
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
-            Err(crate::backend(
-                "OpenGL Compute 后端只支持 Windows/WGL 和 Linux/EGL；macOS 原生 OpenGL 不支持 4.3 Compute",
-            ))
+            Err(crate::backend(format!(
+                "原生 {api:?} Compute 后端只支持 Windows/WGL 和 Linux/EGL；不使用其他 API 或 CPU 回退",
+            )))
         }
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, api: GlApi) -> Result<()> {
         let version = self.gl.version();
-        if version.is_embedded || (version.major, version.minor) < (4, 3) {
+        let valid_version = match api {
+            GlApi::Desktop => !version.is_embedded && (version.major, version.minor) >= (4, 3),
+            GlApi::Gles => version.is_embedded && (version.major, version.minor) >= (3, 1),
+        };
+        if !valid_version {
             return Err(crate::backend(format!(
-                "需要桌面 OpenGL 4.3 Core，驱动提供 {}.{}{}",
+                "需要原生 {}，驱动提供 {}.{}{}",
+                match api {
+                    GlApi::Desktop => "OpenGL 4.3 Core",
+                    GlApi::Gles => "OpenGL ES 3.1",
+                },
                 version.major,
                 version.minor,
                 if version.is_embedded { " ES" } else { "" },
             )));
         }
-        // SAFETY: the context is current here. These queries are core in 4.3.
+        // SAFETY: the context is current. Never query the desktop-only profile
+        // mask on ES; all remaining limits are core in both selected APIs.
         unsafe {
-            if self.gl.get_parameter_i32(glow::CONTEXT_PROFILE_MASK)
-                & glow::CONTEXT_CORE_PROFILE_BIT as i32
-                == 0
+            if api == GlApi::Desktop
+                && self.gl.get_parameter_i32(glow::CONTEXT_PROFILE_MASK)
+                    & glow::CONTEXT_CORE_PROFILE_BIT as i32
+                    == 0
             {
                 return Err(crate::backend("驱动没有创建 OpenGL Core profile 上下文"));
             }
@@ -104,10 +144,11 @@ impl GlContext {
                     glow::MAX_COMBINED_SHADER_STORAGE_BLOCKS,
                     4,
                 ),
+                // FFT uses exactly two workgroup vec2<f32>[960] arrays.
                 (
                     "compute shared memory bytes",
                     glow::MAX_COMPUTE_SHARED_MEMORY_SIZE,
-                    32768,
+                    15_360,
                 ),
                 (
                     "compute work group invocations",
@@ -157,6 +198,15 @@ impl GlContext {
         }
         Ok(())
     }
+
+    pub(crate) unsafe fn unmap_output(&self) -> bool {
+        // SAFETY: called only for a currently mapped ES output buffer on the
+        // context's worker. The pointer is retained with its native owner.
+        unsafe {
+            self.unmap_buffer.expect("GLES unmap entry point")(glow::SHADER_STORAGE_BUFFER)
+                != glow::FALSE
+        }
+    }
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -189,6 +239,16 @@ mod native {
     #[cfg(target_os = "linux")]
     type NativeSurface = glutin::surface::PbufferSurface;
 
+    fn context_attributes(api: GlApi) -> ContextAttributesBuilder {
+        match api {
+            GlApi::Desktop => ContextAttributesBuilder::new()
+                .with_context_api(ContextApi::OpenGl(Some(Version::new(4, 3))))
+                .with_profile(GlProfile::Core),
+            GlApi::Gles => ContextAttributesBuilder::new()
+                .with_context_api(ContextApi::Gles(Some(Version::new(3, 1)))),
+        }
+    }
+
     pub(super) struct NativeContext {
         // Unbind in Drop, then Rust drops these in dependency order.
         pub(super) context: PossiblyCurrentContext,
@@ -209,7 +269,7 @@ mod native {
         }
 
         #[cfg(target_os = "windows")]
-        pub(super) fn new() -> Result<Self> {
+        pub(super) fn new(api: GlApi) -> Result<Self> {
             use glutin::display::DisplayApiPreference;
             use raw_window_handle::{RawDisplayHandle, WindowsDisplayHandle};
 
@@ -225,7 +285,12 @@ mod native {
             }
             .map_err(|error| crate::backend(format!("无法创建 WGL display：{error}")))?;
             let template = ConfigTemplateBuilder::new()
-                .with_api(Api::OPENGL)
+                // WGL advertises GLES2 for every ES-capable config, even when
+                // the requested context version is ES 3.1 or newer.
+                .with_api(match api {
+                    GlApi::Desktop => Api::OPENGL,
+                    GlApi::Gles => Api::GLES2,
+                })
                 .with_surface_type(ConfigSurfaceTypes::WINDOW)
                 .with_alpha_size(0)
                 .prefer_hardware_accelerated(Some(true))
@@ -233,20 +298,17 @@ mod native {
                 .build();
             let config = unsafe { display.find_configs(template) }
                 .map_err(|error| crate::backend(format!("无法选择 WGL 硬件像素格式：{error}")))?
-                .next()
-                .ok_or_else(|| crate::backend("WGL 没有硬件 OpenGL 窗口配置"))?;
+                .find(|config| config.hardware_accelerated())
+                .ok_or_else(|| crate::backend(format!("WGL 没有硬件 {api:?} 窗口配置")))?;
             let size = NonZeroU32::new(1).expect("nonzero surface size");
             let attributes =
                 SurfaceAttributesBuilder::<NativeSurface>::new().build(handle, size, size);
             let surface = unsafe { display.create_window_surface(&config, &attributes) }
                 .map_err(|error| crate::backend(format!("无法创建隐藏 WGL surface：{error}")))?;
-            let attributes = ContextAttributesBuilder::new()
-                .with_context_api(ContextApi::OpenGl(Some(Version::new(4, 3))))
-                .with_profile(GlProfile::Core)
-                .build(Some(handle));
+            let attributes = context_attributes(api).build(Some(handle));
             let context = unsafe { display.create_context(&config, &attributes) }
                 .map_err(|error| {
-                    crate::backend(format!("无法创建 OpenGL 4.3 Core WGL 上下文：{error}"))
+                    crate::backend(format!("无法创建原生 {api:?} WGL Compute 上下文：{error}"))
                 })?
                 .make_current(&surface)
                 .map_err(|error| crate::backend(format!("无法激活 WGL 上下文：{error}")))?;
@@ -259,7 +321,7 @@ mod native {
         }
 
         #[cfg(target_os = "linux")]
-        pub(super) fn new() -> Result<Self> {
+        pub(super) fn new(api: GlApi) -> Result<Self> {
             use glutin::api::egl::{device::Device, display::Display as EglDisplay};
 
             let devices = Device::query_devices().map_err(|error| {
@@ -283,7 +345,7 @@ mod native {
                         continue;
                     }
                 };
-                match Self::from_egl_display(display) {
+                match Self::from_egl_display(display, api) {
                     Ok(context) => return Ok(context),
                     Err(error) => failures.push(format!("{name}: {error}")),
                 }
@@ -292,15 +354,18 @@ mod native {
                 failures.push("EGL 没有报告任何设备".into());
             }
             Err(crate::backend(format!(
-                "没有可用的硬件 OpenGL 4.3 Core EGL pbuffer 上下文：{}。需要配置系统 GPU 的 EGL 驱动；不需要 DISPLAY，也不会回退到 CPU 推理",
+                "没有可用的硬件 {api:?} EGL Compute pbuffer 上下文：{}。需要配置系统 GPU 的 EGL 驱动；不需要 DISPLAY，也不会回退到 CPU 推理",
                 failures.join("; "),
             )))
         }
 
         #[cfg(target_os = "linux")]
-        fn from_egl_display(display: Display) -> Result<Self> {
+        fn from_egl_display(display: Display, api: GlApi) -> Result<Self> {
             let template = ConfigTemplateBuilder::new()
-                .with_api(Api::OPENGL)
+                .with_api(match api {
+                    GlApi::Desktop => Api::OPENGL,
+                    GlApi::Gles => Api::GLES3,
+                })
                 .with_surface_type(ConfigSurfaceTypes::PBUFFER)
                 .with_alpha_size(0)
                 .prefer_hardware_accelerated(Some(true))
@@ -308,21 +373,18 @@ mod native {
             // SAFETY: the template contains no borrowed native window.
             let config = unsafe { display.find_configs(template) }
                 .map_err(|error| crate::backend(format!("无法选择 EGL pbuffer 配置：{error}")))?
-                .next()
-                .ok_or_else(|| crate::backend("EGL 设备没有硬件桌面 OpenGL pbuffer 配置"))?;
+                .find(|config| config.hardware_accelerated())
+                .ok_or_else(|| crate::backend(format!("EGL 设备没有硬件 {api:?} pbuffer 配置")))?;
             let size = NonZeroU32::new(1).expect("nonzero surface size");
             let attributes = SurfaceAttributesBuilder::<NativeSurface>::new().build(size, size);
             // SAFETY: config belongs to display; no native handles are borrowed.
             let surface = unsafe { display.create_pbuffer_surface(&config, &attributes) }.map_err(
                 |error| crate::backend(format!("无法创建 EGL pbuffer surface：{error}")),
             )?;
-            let attributes = ContextAttributesBuilder::new()
-                .with_context_api(ContextApi::OpenGl(Some(Version::new(4, 3))))
-                .with_profile(GlProfile::Core)
-                .build(None);
+            let attributes = context_attributes(api).build(None);
             let context = unsafe { display.create_context(&config, &attributes) }
                 .map_err(|error| {
-                    crate::backend(format!("无法创建 OpenGL 4.3 Core EGL 上下文：{error}"))
+                    crate::backend(format!("无法创建原生 {api:?} EGL Compute 上下文：{error}"))
                 })?
                 .make_current(&surface)
                 .map_err(|error| crate::backend(format!("无法激活 EGL 上下文：{error}")))?;

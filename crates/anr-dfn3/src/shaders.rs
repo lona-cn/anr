@@ -51,10 +51,21 @@ fn unchecked() -> naga::proc::BoundsCheckPolicies {
 /// Compile once when creating the OpenGL program, never during frame execution.
 #[cfg(feature = "glsl")]
 pub fn glsl(kind: ShaderKind) -> Result<String> {
+    glsl_version(kind, naga::back::glsl::Version::Desktop(430))
+}
+
+/// Compile native OpenGL ES 3.1 shaders, not WebGL shaders.
+#[cfg(feature = "glsl")]
+pub fn glsl_es(kind: ShaderKind) -> Result<String> {
+    glsl_version(kind, naga::back::glsl::Version::new_gles(310))
+}
+
+#[cfg(feature = "glsl")]
+fn glsl_version(kind: ShaderKind, version: naga::back::glsl::Version) -> Result<String> {
     use naga::back::glsl as target;
     let (module, info) = validated(kind)?;
     let options = target::Options {
-        version: target::Version::Desktop(430),
+        version,
         writer_flags: target::WriterFlags::empty(),
         binding_map: (0u8..5)
             .map(|binding| {

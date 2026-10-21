@@ -3,6 +3,7 @@ use anr::NoiseReduction;
 #[cfg(any(
     feature = "ort",
     feature = "gl",
+    feature = "gles",
     feature = "vk",
     feature = "wgpu",
     feature = "dx"
@@ -34,6 +35,8 @@ enum BackendResources {
     },
     #[cfg(feature = "gl")]
     Gl,
+    #[cfg(feature = "gles")]
+    Gles,
     #[cfg(feature = "vk")]
     Vk,
     #[cfg(feature = "wgpu")]
@@ -90,6 +93,20 @@ impl BackendResources {
                 #[cfg(not(feature = "gl"))]
                 bail!("此程序未启用 GL 后端；请以 gl feature 重新构建")
             }
+            Backend::Gles => {
+                #[cfg(feature = "gles")]
+                {
+                    Ok((
+                        Self::Gles,
+                        EngineSpec {
+                            sample_rate: anr::gles::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::gles::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "gles"))]
+                bail!("此程序未启用 GLES 后端；请以 gles feature 重新构建")
+            }
             Backend::Vk => {
                 #[cfg(feature = "vk")]
                 {
@@ -139,6 +156,7 @@ impl BackendResources {
         #[cfg(any(
             feature = "ort",
             feature = "gl",
+            feature = "gles",
             feature = "vk",
             feature = "wgpu",
             feature = "dx"
@@ -153,6 +171,13 @@ impl BackendResources {
             Self::Gl => {
                 let mut reducer = anr::gl::DFN3::from_file(model)
                     .with_context(|| format!("无法以 GL 后端加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "gles")]
+            Self::Gles => {
+                let mut reducer = anr::gles::DFN3::from_file(model)
+                    .with_context(|| format!("无法以 GLES 后端加载模型 {}", model.display()))?;
                 reducer.set_factor(strength);
                 Ok(Box::new(reducer))
             }
@@ -181,6 +206,7 @@ impl BackendResources {
         #[cfg(not(any(
             feature = "ort",
             feature = "gl",
+            feature = "gles",
             feature = "vk",
             feature = "wgpu",
             feature = "dx"
@@ -329,6 +355,12 @@ pub fn backends() -> Vec<BackendInfo> {
         BackendInfo {
             name: "gl",
             compiled: cfg!(feature = "gl"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "gles",
+            compiled: cfg!(feature = "gles"),
             runtime_available: None,
             providers: Vec::new(),
         },

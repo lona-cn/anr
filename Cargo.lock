@@ -19,11 +19,12 @@ dependencies = [
 
 [[package]]
 name = "anr"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "anr-dx",
  "anr-gl",
+ "anr-gles",
  "anr-ort",
  "anr-vk",
  "anr-wgpu",
@@ -31,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "anr-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr",
  "anyhow",
@@ -48,11 +49,11 @@ dependencies = [
 
 [[package]]
 name = "anr-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "anr-dfn3"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "bytemuck",
@@ -63,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "anr-dx"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -73,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "anr-gl"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -86,8 +87,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "anr-gles"
+version = "0.1.1"
+dependencies = [
+ "anr-core",
+ "anr-gl",
+ "tempfile",
+]
+
+[[package]]
 name = "anr-ort"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "ort",
@@ -95,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "anr-vk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -105,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "anr-wgpu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anr-core",
  "anr-dfn3",

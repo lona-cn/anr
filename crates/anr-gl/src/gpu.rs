@@ -1,5 +1,5 @@
 use crate::context::GlContext;
-use crate::{FRAME_SIZE, STATE_SIZE, backend};
+use crate::{FRAME_SIZE, GlApi, STATE_SIZE, backend};
 use anr_core::Result;
 use anr_dfn3::{Executor, Model, PARAMETER_BYTES, ShaderKind};
 use glow::HasContext;
@@ -39,7 +39,7 @@ impl Kernel {
     }
 }
 
-pub(crate) struct Gpu {
+pub(crate) struct Gpu<const ES: bool> {
     context: GlContext,
     programs: [Kernel; 3],
     buffers: [glow::NativeBuffer; 5],
@@ -48,9 +48,9 @@ pub(crate) struct Gpu {
     current: usize,
     zeros: Vec<f32>,
 }
-impl Executor for Gpu {
+impl<const ES: bool> Executor for Gpu<ES> {
     fn new(mut model: Model) -> Result<Self> {
-        let context = GlContext::new()?;
+        let context = GlContext::new(if ES { GlApi::Gles } else { GlApi::Desktop })?;
         let gl = &context.gl;
         let alignment = unsafe { gl.get_parameter_i32(glow::UNIFORM_BUFFER_OFFSET_ALIGNMENT) };
         if alignment <= 0 {
@@ -64,7 +64,11 @@ impl Executor for Gpu {
         let setup = (|| -> Result<()> {
             unsafe {
                 for kind in ShaderKind::ALL {
-                    let source = anr_dfn3::shaders::glsl(kind)?;
+                    let source = if ES {
+                        anr_dfn3::shaders::glsl_es(kind)?
+                    } else {
+                        anr_dfn3::shaders::glsl(kind)?
+                    };
                     programs.push(Kernel::new(gl, &source)?);
                 }
                 let limit = gl.get_parameter_i64(glow::MAX_SHADER_STORAGE_BLOCK_SIZE);
@@ -207,6 +211,9 @@ impl Executor for Gpu {
                 .map_err(backend)?;
             let mut flags = glow::SYNC_FLUSH_COMMANDS_BIT;
             loop {
+                // Native ES glClientWaitSync accepts nanoseconds, unlike
+                // glWaitSync's TIMEOUT_IGNORED rule or WebGL's timeout cap.
+                // glow 0.16 takes i32 and casts to u64, so keep it positive.
                 let status = gl.client_wait_sync(fence, flags, 1_000_000_000);
                 flags = 0;
                 if status == glow::ALREADY_SIGNALED || status == glow::CONDITION_SATISFIED {
@@ -218,11 +225,40 @@ impl Executor for Gpu {
                 }
             }
             gl.delete_sync(fence);
-            gl.get_buffer_sub_data(
-                glow::SHADER_STORAGE_BUFFER,
-                (self.model.output * 4) as i32,
-                bytemuck::cast_slice_mut(output),
-            );
+            if ES {
+                // GLES has no glGetBufferSubData. Only the completed frame's
+                // 480 floats are mapped, not weights, state or the full arena.
+                let mapped = gl.map_buffer_range(
+                    glow::SHADER_STORAGE_BUFFER,
+                    (self.model.output * 4) as i32,
+                    std::mem::size_of_val(output) as i32,
+                    glow::MAP_READ_BIT,
+                );
+                if mapped.is_null() {
+                    let error = gl.get_error();
+                    return Err(backend(format!(
+                        "映射 GLES 输出失败：0x{error:04x}；请重置或重新创建降噪器"
+                    )));
+                }
+                // Copy bytes: the native mapped address need not be aligned
+                // for Rust f32 references. No fallible operation precedes unmap.
+                std::ptr::copy_nonoverlapping(
+                    mapped,
+                    output.as_mut_ptr().cast::<u8>(),
+                    std::mem::size_of_val(output),
+                );
+                if !self.context.unmap_output() {
+                    return Err(backend(
+                        "解除 GLES 输出映射失败或映射内容已损坏；请重置或重新创建降噪器",
+                    ));
+                }
+            } else {
+                gl.get_buffer_sub_data(
+                    glow::SHADER_STORAGE_BUFFER,
+                    (self.model.output * 4) as i32,
+                    bytemuck::cast_slice_mut(output),
+                );
+            }
             let error = gl.get_error();
             if error != glow::NO_ERROR {
                 return Err(backend(format!(
@@ -234,7 +270,7 @@ impl Executor for Gpu {
         Ok(())
     }
 }
-impl Drop for Gpu {
+impl<const ES: bool> Drop for Gpu<ES> {
     fn drop(&mut self) {
         unsafe {
             let gl = &self.context.gl;

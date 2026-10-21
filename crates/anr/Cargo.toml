@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 readme = "README.md"
+repository = "https://github.com/lona-cn/anr"
 documentation = "https://docs.rs/anr"
 keywords = ["audio", "noise-reduction", "denoise", "deepfilternet"]
 categories = ["multimedia::audio"]
@@ -14,6 +15,7 @@ include = ["src/**", "examples/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"
 anr-core.workspace = true
 anr-ort = { workspace = true, optional = true }
 anr-gl = { workspace = true, optional = true }
+anr-gles = { workspace = true, optional = true }
 anr-vk = { workspace = true, optional = true }
 anr-wgpu = { workspace = true, optional = true }
 anr-dx = { workspace = true, optional = true }
@@ -22,6 +24,7 @@ anr-dx = { workspace = true, optional = true }
 default = ["ort-download-binaries"]
 ort = ["dep:anr-ort"]
 gl = ["dep:anr-gl"]
+gles = ["dep:anr-gles"]
 vk = ["dep:anr-vk"]
 wgpu = ["dep:anr-wgpu"]
 dx = ["dep:anr-dx"]

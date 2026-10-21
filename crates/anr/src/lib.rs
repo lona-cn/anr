@@ -2,7 +2,7 @@
 //!
 //! The default build exports only [`NoiseReduction`], [`Error`], and [`Result`].
 //! Enable the `ort` feature for `DFN3` and the `ort` backend module.
-//! Enable `gl`, `vk`, `wgpu` or `dx` for a model-specific native compute backend.
+//! Enable `gl`, `gles`, `vk`, `wgpu` or `dx` for a model-specific native compute backend.
 
 pub use anr_core::{Error, NoiseReduction, Result};
 
@@ -19,7 +19,13 @@ pub use anr_ort::DFN3;
 /// OpenGL Compute backend for the supported DFN3 model.
 #[cfg(feature = "gl")]
 pub mod gl {
-    pub use anr_gl::DFN3;
+    pub use anr_gl::{DFN3, GlApi};
+}
+
+/// Native OpenGL ES Compute backend for the supported DFN3 model.
+#[cfg(feature = "gles")]
+pub mod gles {
+    pub use anr_gles::DFN3;
 }
 
 /// Native Vulkan Compute backend for the supported DFN3 model.

@@ -1,0 +1,16 @@
+[package]
+name = "anr-gles"
+description = "Model-specific DeepFilterNet3 inference with native OpenGL ES compute shaders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+repository = "https://github.com/lona-cn/anr"
+include = ["src/**", "tests/dfn3.rs", "tests/fixtures/reference_*.f32le", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+anr-gl.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27"

@@ -107,6 +107,7 @@ pub enum WavFormat {
 pub enum Backend {
     Ort,
     Gl,
+    Gles,
     Vk,
     Wgpu,
     Dx,
@@ -117,6 +118,7 @@ impl Backend {
         match self {
             Self::Ort => "ort",
             Self::Gl => "gl",
+            Self::Gles => "gles",
             Self::Vk => "vk",
             Self::Wgpu => "wgpu",
             Self::Dx => "dx",
