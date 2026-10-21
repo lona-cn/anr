@@ -1,0 +1,27 @@
+{
+  "repository": "lona-cn/anr",
+  "tag": "model-dfn3-fe5eb64fa2e4",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    {
+      "name": "dfn3.onnx",
+      "sha256": "fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9",
+      "size": 16104687
+    },
+    {
+      "name": "LICENSE-MIT",
+      "sha256": "33af8585bea946e3eaa72997e265d7ac68ab0b250a12a10bb51b2e10d37d31ed",
+      "size": 1073
+    },
+    {
+      "name": "LICENSE-APACHE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "size": 11358
+    },
+    {
+      "name": "NOTICE.md",
+      "sha256": "5ec5cf175b3e4ab7ca59a47f7fbfe804a25ee775dc0c7b9fae13024c69df0fdd",
+      "size": 785
+    }
+  ]
+}

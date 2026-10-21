@@ -1,0 +1,22 @@
+{
+  "repository": "microsoft/onnxruntime",
+  "version": "1.28.0",
+  "source_commit": "da9b5e364c465de65c49d91e696cd6485270757f",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "archive": "onnxruntime-win-x64-1.28.0.zip",
+      "sha256": "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc",
+      "size": 78796801
+    },
+    "x86_64-unknown-linux-gnu": {
+      "archive": "onnxruntime-linux-x64-1.28.0.tgz",
+      "sha256": "a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407",
+      "size": 9125960
+    },
+    "aarch64-apple-darwin": {
+      "archive": "onnxruntime-osx-arm64-1.28.0.tgz",
+      "sha256": "1268b359718099bde2cedb55787f182a130067bc4f31e8c88478c445b850d3d8",
+      "size": 32396562
+    }
+  }
+}

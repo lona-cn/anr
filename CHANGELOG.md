@@ -14,8 +14,8 @@
 - 新增 `anr-cli`（二进制名 `anr`）：通过统一 `anr` 入口执行文件降噪、串行批处理、音频信息查询和 raw f32le stdin/stdout；默认启用 CPU ORT，provider 显式选择且不静默回退。
 - CLI 采用 Symphonia 解码、rubato 带限流式重采样、每声道独立模型状态、跨解码包模型分帧，以及 PCM16/PCM24/float32 WAV 或 raw 输出；默认保留采样率、声道和帧数，不猜测性补偿模型算法延迟。
 - CLI 默认不覆盖目标，完成并 finalize 后才提交同目录临时文件；批次单文件失败继续、成功结果保留。音频 stdout 与 stderr 诊断分离，支持取消与下游 BrokenPipe。
-- CI 配置覆盖四种原生 OS/架构，统一使用 Rust stable 构建和运行进程测试，并验收安装后从无关工作目录处理控制图音频；配置不等于平台已通过，真实模型、格式和可选 provider 的运行结果须单独记录。
-- CI 在 push、pull request 或手动操作时运行，使用只读仓库权限，并取消同分支的旧任务；执行格式、Clippy 和文档构建检查。
+- CI 配置覆盖 Windows x64、Linux x64、macOS arm64/x64 四种原生 runner，统一使用 Rust stable；包含固定模型下载校验、真实模型测试、无后端模式、Clippy、全 features 编译、文档和解压 ZIP 后的实际推理。配置不等于平台通过，结果仍以实际 job 为准。
+- CI 在 main/master push、版本 tag、pull request 或手动操作时运行；只取消同一 PR 的旧任务，普通 push 使用每提交独立的运行，不静默丢弃较早提交的预发布。
 - CI 使用按平台、rustc 版本和工作流配置区分的 Cargo 缓存，包含 ORT 下载目录；Intel macOS 的 CPU 共享库跨运行复用，缓存命中时跳过 ORT 源码构建，仍执行所有 Rust 构建与测试。
 - 补充 CLI 独立许可和第三方说明，明确 Symphonia MPL-2.0 源码获取/修改义务，及 Rust ORT 绑定、原生运行库与模型权重的许可边界。
 - 发布安全修复：按实际 FileId 保护输入/模型和本批已完成结果，不再依赖操作系统名称或字符串大小写判断；写入前、提交前均复核，已保存但身份记录失败时明确报告状态并停止后续处理。
@@ -23,5 +23,9 @@
 - 动态库使用可失败的显式加载入口；库构造改为 `DFN3::from_file(&Environment, path)`，应用持有环境，CLI 整批共用一个环境；`NoiseReduction` trait 与 CLI 命令不变。
 - CPU 构造显式选择内置 provider，不继承自动 NPU 策略，也不强制 minimal runtime 实现设备发现；JSON 输出保留 BrokenPipe 分类。
 - 拆分 `ort` 与 `ort-download-binaries`：普通默认用法仍下载 CPU 库，默认 facade 仍只依赖 core，关闭 defaults 的动态模式不再带下载器和 TLS/OpenSSL 构建依赖。
+- GitHub 模型资产 Release 单独提供固定 SHA-256 的 `dfn3.onnx`、两份模型许可、NOTICE、清单及 SHA256SUMS；维护者已确认这份模型可按 MIT OR Apache-2.0 分发。
+- main/master push 在四平台全通过后生成不可变提交预发布；`v<工作区版本>` tag 发布对应版本，拒绝版本错配；PR 和手动 CI 不发布，不涉及 crates.io。
+- GitHub 应用 ZIP 包含 CLI、CPU ONNX Runtime 1.28.0、DFN3 模型及项目/模型/原生库许可；使用 `ort-load-dynamic`，不要求用户自行配置运行库搜索路径，`--model` 仍明确必填。
+- 发布先上传到 draft，全部 ZIP 和 SHA256SUMS 核对完成后才公开；不移动 tag，不覆盖已公开版本或同名异摘要资产。使用内置 `GITHUB_TOKEN`，仅发布 job 授予 Contents 写入，无需专用 Secret；历史 workflow 提交若触发额外授权限制，明确失败而不替换目标提交。
 
-模型由使用者提供，不打包或自动下载。工作区可使用 `models/dfn3.onnx`，但该文件不随 crate 分发；本项目不对任意来源的模型作音质、性能或授权保证。
+Rust 包仍不打包或自动下载模型，工作区仍可使用 `models/dfn3.onnx`。GitHub 模型资产与应用 ZIP 的模型分发是单独的明确授权范围，不代表任意来源模型的音质、性能或许可保证。

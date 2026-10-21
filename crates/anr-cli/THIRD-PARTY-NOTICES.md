@@ -38,11 +38,11 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 ## Rust ORT 绑定与 ONNX Runtime 是两个组件
 
 - Rust `ort` / `ort-sys` 固定为 **2.0.0-rc.15**，声明 **MIT OR Apache-2.0**，来自 [pykeio/ort](https://github.com/pykeio/ort)。其 [ort 源码](https://docs.rs/crate/ort/2.0.0-rc.15/source/) 与 [ort-sys 源码](https://docs.rs/crate/ort-sys/2.0.0-rc.15/source/) 含独立版权和许可。
-- Microsoft **ONNX Runtime** 是实际执行推理的原生运行库，不是 Rust 绑定的另一名称；其 [上游源码](https://github.com/microsoft/onnxruntime)、[MIT 许可](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) 和 [ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt) 需独立处理。绑定的默认预编译分发为 1.31.0；Intel macOS CI 和兼容性验收也使用 API-27-compatible 1.28.0。默认分发、自建库和 `ORT_DYLIB_PATH` 指定库的组件集合可能不同，必须保留**实际使用版本**附带的版权、许可与通知，不能用上游当前版本的文件替代。
+- Microsoft **ONNX Runtime** 是实际执行推理的原生运行库，不是 Rust 绑定的另一名称；其 [上游源码](https://github.com/microsoft/onnxruntime)、[MIT 许可](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) 和 [ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt) 需独立处理。Rust 绑定的默认预编译分发为 1.31.0；GitHub 应用 ZIP 改用 API 27 兼容的 CPU 1.28.0 共享库，Windows/Linux/macOS arm64 来自固定摘要的官方包，Intel macOS 来自固定提交的源码构建。ZIP 的 `licenses/onnxruntime/` 保留**实际分发版本**的 `LICENSE` 与 `ThirdPartyNotices.txt`，不以源仓库当前版本的文件替代。默认分发、自建库和 `ORT_DYLIB_PATH` 指定库的组件集合可能不同。
 - CUDA、TensorRT、DirectML、CoreML、XNNPACK 等 provider 及其驱动、SDK、系统框架或随附库各有适用条款。选择 Cargo feature 不代表取得其再分发许可，也不表示这些库已被安装。分发者只应携带有权分发的运行库及其通知，不把 Microsoft、NVIDIA、Apple 或其他供应商组件列为 anr contributors 自有代码。
 
 ## 模型权重与测试控制图
 
-DFN3 模型权重和导出 ONNX 文件不随 CLI crate 提供，也不自动下载。权重、训练数据、导出过程及使用限制需按实际来源确认；[DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可不能推出任意下载模型的使用或再分发权限。
+DFN3 模型权重不随 CLI crate / `cargo install` 提供，CLI 本身不自动下载。GitHub 应用 ZIP 则明确包含 `models/dfn3.onnx`，其固定资产来自 [模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4)。维护者已确认有权将 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 对应的文件按 **MIT OR Apache-2.0** 分发；两份许可、NOTICE 和资产清单随 ZIP 的 `models/` 一起提供。其他权重、训练数据或导出文件的使用与分发权仍按实际来源确认，不能由 [DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可推断。
 
-`tests/fixtures` 中本项目自制的微型 ONNX 控制图用于验证输入输出、状态和错误处理，属于项目测试材料，不含用户 DFN3 权重，不宣称具有真实降噪能力。CI 使用这些控制图，不重新分发工作区 `models/` 中的用户模型。
+`tests/fixtures` 中本项目自制的微型 ONNX 控制图用于验证输入输出、状态和错误处理，不含 DFN3 权重，也不宣称具有降噪能力。CI 同时使用这些控制图和经 Release 摘要校验的真实模型；模型仍不进入 Rust crate，仅进入明确包含它的 GitHub 应用 ZIP。

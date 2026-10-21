@@ -8,9 +8,17 @@
 
 The library takes **48 kHz, mono `f32` samples**. For audio files, resampling, and multiple channels, use [`anr-cli`](crates/anr-cli/README.md). The CLI handles files, batches, and raw PCM streams; it does not provide microphone access, virtual audio devices, or drivers.
 
-The project supports only the **latest stable Rust toolchain**. You'll also need a compatible ONNX model. Models are not included in the Rust packages or downloaded automatically. A model named “DeepFilterNet3” is not necessarily compatible—check its inputs and outputs below.
+Source builds require the **latest stable Rust toolchain**. Rust packages and `cargo install` do not include or automatically download a model. GitHub application ZIPs use the matched DFN3 model described below; a model with the same name is not necessarily compatible, so check its inputs and outputs before substituting one.
 
 ### Denoise a file
+
+The [GitHub application releases](https://github.com/lona-cn/anr/releases) are built as native ZIPs with the CLI, CPU runtime, `models/dfn3.onnx`, and license files. Extract the whole ZIP and run from its directory:
+
+```sh
+./anr denoise voice.wav --output clean.wav --model models/dfn3.onnx
+```
+
+On Windows, use `.\anr.exe` instead of `./anr`. The `--model` argument is still required. Application ZIPs appear only after the release workflow passes; the separate [model asset release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains the model, not a CLI build. See the [CLI distribution notes](crates/anr-cli/README.md) for system runtime requirements.
 
 Install the CLI from the workspace root. The executable is called `anr`. This default build uses ORT's prebuilt libraries where available; on Intel macOS, follow the [CLI instructions](crates/anr-cli/README.md) for supplying your own runtime instead.
 
@@ -139,13 +147,31 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Th
 
 `NoiseReduction` works as `Box<dyn NoiseReduction>`, and reducers can be moved between threads (`Send`). The three library crates do not manage audio devices, decode WAV, resample, or split multiple channels. The CLI handles file decoding, resampling, and channels outside the library. No package downloads models automatically.
 
+### Automated GitHub releases
+
+The [workflow](.github/workflows/ci.yml) tests native Windows x64, Linux x64, and macOS arm64/x64. It downloads the pinned model and licenses, verifies their SHA-256 values, and runs both the control graph and real DFN3 from each extracted ZIP before publishing anything.
+
+| Event | Result after all four platforms pass |
+| --- | --- |
+| Push to `main` or the current `master` branch | Immutable `main-<12-character SHA>` / `master-<12-character SHA>` prerelease; not marked latest. |
+| Push `v<workspace version>` | Version release; a Cargo prerelease suffix remains a GitHub prerelease. |
+| Pull request or manual CI | Tests and ZIP artifacts only; no Release. |
+
+Publication uses Actions' built-in **`GITHUB_TOKEN`**, mapped to `GH_TOKEN`, with **Contents: write** granted only to the publication job. No custom repository secret is required; PR and build jobs remain read-only.
+
+GitHub can reject a historical target whose workflow changes require **Workflows: write**, which the built-in token cannot obtain ([API restriction](https://docs.github.com/en/rest/releases/releases#create-a-release)). This accepted boundary produces an explicit failed release; the workflow does not substitute a newer commit, move tags, or overwrite assets.
+
+Commit and push the workflow changes before pushing a version tag. For the current `Cargo.toml` version, the matching tag is `v0.1.0`; a mismatched tag fails rather than releasing mislabeled binaries. This workflow does not publish crates.io packages. Existing public releases and assets are never overwritten on rerun.
+
 ### License
 
 The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Including both full license texts in each standalone package is this project's distribution choice, not a Cargo requirement.
 
-Check model weights and ONNX files separately for use and redistribution rights. The DeepFilterNet source being dual-licensed does not mean every model from every source has the same license. The CLI's Symphonia decoder uses MPL-2.0; rubato, the Rust `ort` crate, ONNX Runtime, and execution-provider libraries have their own terms. See the [third-party notices](crates/anr-cli/THIRD-PARTY-NOTICES.md) for source, modification, and binary distribution obligations. The project's dual license does not replace those terms.
+The supplied [model asset release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) is **MIT OR Apache-2.0**, as authorized by the maintainer for the exact SHA-256 in [its manifest](.github/models/dfn3.json); the ZIP carries the model's licenses and notice. Check other models separately: DeepFilterNet's source license does not establish rights for arbitrary exports or weights.
 
-See [CHANGELOG.md](CHANGELOG.md) for version changes and [RELEASING.md](RELEASING.md) for maintainer release steps.
+The CLI's Symphonia decoder uses MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and execution-provider libraries have their own terms. See the [third-party notices](crates/anr-cli/THIRD-PARTY-NOTICES.md) for source, modification, and binary distribution obligations. The project's dual license does not replace those terms.
+
+See [CHANGELOG.md](CHANGELOG.md) for version changes and [CI and Release](.github/workflows/ci.yml) for the maintained release procedure.
 
 ## 简体中文
 
@@ -153,9 +179,17 @@ See [CHANGELOG.md](CHANGELOG.md) for version changes and [RELEASING.md](RELEASIN
 
 库接口处理 **48 kHz、单声道的 `f32` 采样**。音频文件解码、采样率转换和多声道处理可以交给 [`anr-cli`](crates/anr-cli/README.md)。CLI 用于文件、批处理和 raw PCM 流，不提供麦克风访问、虚拟声卡或驱动。
 
-项目仅支持 **最新 Rust stable 工具链**。还需准备符合要求的 ONNX 模型。模型不随 Rust 包提供，也不会自动下载；同样叫 DeepFilterNet3 的模型，输入输出也可能不同，请先核对下文要求。
+从源码构建需要 **最新 Rust stable 工具链**。Rust 包和 `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 则附带下述已匹配的 DFN3 模型。替换模型前仍需核对输入输出，名称相同不代表接口相同。
 
 ### 直接处理音频文件
+
+[GitHub 应用 Release](https://github.com/lona-cn/anr/releases) 由 CI 生成原生 ZIP，包含 CLI、CPU 运行库、`models/dfn3.onnx` 和许可文件。完整解压后，进入解压目录运行：
+
+```sh
+./anr denoise voice.wav --output clean.wav --model models/dfn3.onnx
+```
+
+Windows 将 `./anr` 换成 `.\anr.exe`；`--model` 仍为必填。应用 ZIP 需等发版工作流通过后才会出现；独立的 [模型资产 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已提供模型，但不是 CLI 安装包。系统运行库要求见 [CLI 文档](crates/anr-cli/README.md)。
 
 在源码工作区根目录安装 CLI，二进制名为 `anr`。默认构建方式使用 ORT 提供的预编译库；Intel macOS 请按 [CLI 文档](crates/anr-cli/README.md) 配置自备运行库。
 
@@ -284,10 +318,28 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。其�
 
 `NoiseReduction` 支持 `Box<dyn NoiseReduction>`，降噪器也可以移交给另一个线程（`Send`）。三个库包不负责音频设备管理、WAV 解码、采样率转换或多声道拆分；CLI 在库外处理文件解码、重采样和多声道。所有包都不自动下载模型。
 
+### 自动发布到 GitHub
+
+[工作流](.github/workflows/ci.yml) 在 Windows x64、Linux x64、macOS arm64/x64 原生 runner 验证。它从固定 Release 下载模型及许可、核对 SHA-256，再解压各平台 ZIP，用控制图和真实 DFN3 实跑；四个平台全部通过后才公开发版。
+
+| 触发事件 | 四个平台通过后的结果 |
+| --- | --- |
+| push 到 `main` 或现有 `master` | 生成不可变的 `main-<12位SHA>` / `master-<12位SHA>` 预发布，不设为 latest。 |
+| push `v<工作区版本>` tag | 发布对应版本；Cargo 预发布后缀仍标为 GitHub prerelease。 |
+| pull request 或手动 CI | 只测试和生成 ZIP artifacts，不发布 Release。 |
+
+发布使用 Actions 自动提供的 **`GITHUB_TOKEN`**，映射为 `GH_TOKEN`，仅发布 job 授予 **Contents: write**；无需配置额外仓库 Secret，PR 与构建 job 保持只读。
+
+部分历史提交的 workflow 变更可能触发 **Workflows: write** 授权检查，内置 token 无法获得该权限（[API 说明](https://docs.github.com/en/rest/releases/releases#create-a-release)）。当前策略接受这类发版明确失败，不换用较新的提交，也不移动 tag 或覆盖资产。
+
+先提交并推送工作流改动，再推版本 tag。当前 `Cargo.toml` 对应 `v0.1.0`；tag 与版本不匹配会失败，不生成版本错误的包。该工作流不发布 crates.io，也不会在重跑时覆盖已有公开 Release 或资产。
+
 ### 许可
 
 代码采用 **MIT OR Apache-2.0**，使用时任选其一。完整文本见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。每个独立发布包附带两份完整文本是本项目的分发选择，不是 Cargo 的强制要求。
 
-模型权重和 ONNX 文件需要单独确认使用与分发权限。DeepFilterNet 源码采用双许可，不代表任何来源的模型都具有相同许可。CLI 的 Symphonia 解码器采用 MPL-2.0；rubato、Rust `ort` 包、ONNX Runtime 及执行 provider 所依赖的库也各有许可要求。源码获取、修改与二进制分发义务见 [第三方说明](crates/anr-cli/THIRD-PARTY-NOTICES.md)，项目双许可不替代这些条款。
+本仓库提供的 [模型资产 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已由维护者授权按 **MIT OR Apache-2.0** 分发，仅限 [清单](.github/models/dfn3.json) 中 SHA-256 对应的文件；ZIP 附带模型许可与说明。其他来源的模型仍需单独确认，不能从 DeepFilterNet 源码的许可推断任意导出文件或权重的权利。
 
-版本变更见 [CHANGELOG.md](CHANGELOG.md)，维护者发布步骤见 [RELEASING.md](RELEASING.md)。
+CLI 的 Symphonia 解码器采用 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及执行 provider 所依赖的库也各有许可要求。源码获取、修改与二进制分发义务见 [第三方说明](crates/anr-cli/THIRD-PARTY-NOTICES.md)，项目双许可不替代这些条款。
+
+版本变更见 [CHANGELOG.md](CHANGELOG.md)，持续维护的发版步骤见 [CI and Release](.github/workflows/ci.yml)。

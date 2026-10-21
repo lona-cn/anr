@@ -21,6 +21,22 @@ A one-dimensional tensor may declare a symbolic length, but runtime lengths stil
 
 ### Install and try it
 
+#### Use an application ZIP
+
+Application releases publish `anr-<version-or-commit>-<target>.zip` for Windows x64, Linux x64, macOS Apple Silicon, and macOS Intel. Each contains the executable, CPU ONNX Runtime **1.28.0**, `models/dfn3.onnx`, and project/model/runtime licenses. No Rust, Python, or FFmpeg is needed to process audio. The separate [model release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) is already available; application ZIPs are produced only after the new CI/release workflow has been pushed and all platforms pass.
+
+Extract everything, enter the extracted directory, and run:
+
+```sh
+./anr denoise input.wav --output clean.wav --model models/dfn3.onnx
+```
+
+On Windows use `.\anr.exe`. `--model` remains required; it is not searched for automatically. Keep the native shared libraries beside the executable. No `ORT_DYLIB_PATH` setting is needed for the bundled runtime; remove an old override if you want to use the bundled copy.
+
+Windows may need the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The Linux package targets glibc and is built on Ubuntu 24.04, not musl or arbitrary older glibc. macOS packages are ad-hoc signed, not notarized; follow the system's approval prompts for downloaded applications. GPU providers are not bundled. Check attached `SHA256SUMS` before use.
+
+#### Build from source
+
 Install from the source workspace root. The default build uses ORT's prebuilt libraries where available. **On Intel macOS, use the instructions below for supplying your own runtime instead.**
 
 ```text
@@ -161,23 +177,25 @@ For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, p
 
 ### What has been tested
 
-CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`). Each uses the latest stable Rust toolchain to build and run CLI tests, then installs the CLI and exercises audio processing with a control graph from an unrelated directory. Intel macOS builds CPU ONNX Runtime from source on a native-library cache miss. A workflow file is not a test result: only a successful job run establishes that platform's result. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`). Each uses Rust stable, verifies the pinned model and runtime assets, runs workspace tests including the real-model case, checks the no-backend build, Clippy, all-feature compilation, and docs, then builds and extracts its release ZIP. Control-graph state/stereo assertions and 48,001-sample real DFN3 inference run outside the source directory with runtime-search overrides removed. Intel macOS caches its pinned source-built runtime and notices together. A workflow file is not a test result: only a successful job establishes a platform result. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
 
 Current local publishing-safety checks use Rust 1.99 on Windows x64 (65 tests) and WSL Ubuntu 24.04 x64 (66 tests), including real DFN3 inference. The no-backend CLI has 38 passing tests. Three isolated dynamic-runtime tests cover repeated failure, recovery with inference, and reuse without changing the host environment; separate CLI checks cover missing-library errors through CPU and XNNPACK paths. The installed release also ran from an unrelated directory: 48,001 samples through the real model, unknown-length WAV stdin, closed JSON stdout, and protected case aliases. Both failure smoke paths preserved the existing target without temporary files. Earlier Windows console-cancellation checks and current Linux SIGINT checks preserved outputs. Earlier Rust 1.88 results predate the ORT upgrade and do not establish compatibility with the current code. **macOS, real minimal runtimes, GPU/NPU hardware, and GitHub Actions jobs have not been run.** Local results do not stand in for those runs.
 
+The ZIP packaging changes have additionally passed on native Windows x64 and WSL Linux x64 with the real downloaded model and official CPU runtime, including control-state values, stereo WAV, and exact-length finite real-model output. The model and its licenses were downloaded back from the public model Release and checked. The new hosted workflow has not been run locally; macOS relocation/signing still requires its native runner.
+
 ### License and redistribution
 
 The project code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Including both full texts in each standalone source package is this project's distribution choice, not a Cargo requirement.
 
-Dependencies and model weights keep their own licenses. Symphonia uses MPL-2.0; rubato, the Rust `ort` bindings, ONNX Runtime, and optional providers have separate terms and notices. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for source availability and modification obligations. Check use and redistribution rights for model weights and exported ONNX files separately; they cannot be inferred from the DeepFilterNet source license.
+Dependencies and model weights keep their own licenses. The supplied model asset and its matching manifest are explicitly **MIT OR Apache-2.0** as authorized by the maintainer; the ZIP includes `models/LICENSE-MIT`, `models/LICENSE-APACHE`, and `models/NOTICE.md`. This does not grant rights to unrelated model exports. Symphonia uses MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and optional providers have separate terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for source availability, modification, and binary redistribution obligations.
 
 ## 简体中文
 
 `anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3 / ONNX Runtime，自行完成解码、带限重采样和多声道处理。运行时不需要 FFmpeg 或 Python。
 
-从源码构建需要 **最新 Rust stable 工具链**。模型必须明确提供：不随包分发、不自动下载，也不会自行选用源码目录里的 `models/` 文件。模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
+从源码构建需要 **最新 Rust stable 工具链**。Rust crate / `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 附带模型和运行库。无论哪种方式，`--model` 都必须明确传入，也不会自行选用源码目录里的 `models/` 文件。模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -191,6 +209,22 @@ Dependencies and model weights keep their own licenses. Symphonia uses MPL-2.0; 
 一维长度可以用符号维度声明，但运行时长度不能改变。模型授权、音质和算法延迟需要另外核实。
 
 ### 安装与第一次运行
+
+#### 使用应用 ZIP
+
+应用 Release 为 Windows x64、Linux x64、macOS Apple Silicon 和 macOS Intel 提供 `anr-<版本或提交>-<target>.zip`。包内有可执行文件、CPU ONNX Runtime **1.28.0**、`models/dfn3.onnx` 以及项目、模型和运行库的许可；处理音频不需要 Rust、Python 或 FFmpeg。独立的 [模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已提供模型；应用 ZIP 需先推送新工作流，等四个平台通过后才会生成并发布。
+
+完整解压，进入解压目录后运行：
+
+```sh
+./anr denoise input.wav --output clean.wav --model models/dfn3.onnx
+```
+
+Windows 使用 `.\anr.exe`。`--model` 仍然必填，不会自动查找模型；随包共享库需与可执行文件保持同目录。默认不需设置 `ORT_DYLIB_PATH`，若以前设置过它，想用随包运行库时应先移除旧的覆盖值。
+
+Windows 可能需要安装微软 [Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。Linux 包在 Ubuntu 24.04 构建，使用 glibc，不等于支持 musl 或任意旧 glibc。macOS 包使用 ad-hoc 签名，未公证；下载后按系统提示允许打开。不包含 GPU provider。使用前核对 Release 附带的 `SHA256SUMS`。
+
+#### 从源码构建
 
 在源码工作区根目录安装。默认构建方式使用 ORT 提供的预编译库；**Intel macOS 请改用后面的自备运行库方式。**
 
@@ -332,14 +366,16 @@ cargo build -p anr-cli --no-default-features --features ort-load-dynamic
 
 ### 哪些已经测过
 
-CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）、macOS x64（`macos-15-intel`）。每种使用最新 Rust stable 工具链构建并运行 CLI 测试，再安装 CLI，从无关目录用控制图运行音频处理；Intel macOS 在原生库缓存未命中时从源码构建 CPU ONNX Runtime。配置文件不是运行结果，只有对应 job 实际通过才能记录该平台通过。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）、macOS x64（`macos-15-intel`）。每种使用 Rust stable，校验固定模型和运行库资产，运行包含真实模型的工作区测试，并检查无后端构建、Clippy、全 features 编译和文档；随后构建并解压 Release ZIP，在无关目录、清除运行库搜索覆盖值后，核对控制图状态/立体声数值和真实 DFN3 的 48,001 个采样输出。Intel macOS 将固定源码构建的运行库及许可一同缓存。配置文件不是运行结果，只有对应 job 实际通过才能记录该平台通过。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
 自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
 
 本轮发布安全检查在 Rust 1.99 上通过：Windows x64 65 项、WSL Ubuntu 24.04 x64 66 项，包含真实 DFN3 推理；无后端 CLI 38 项。三项独立进程动态运行库回归覆盖重复失败、恢复后推理和不改宿主环境的复用；另验 CPU/XNNPACK 路径的缺库错误。安装后的 release 从无关目录完成真实模型 48,001 个采样、未知长度 WAV stdin、JSON stdout 提前关闭和大小写别名保护；两种失败 smoke 均保留旧目标且无临时文件。此前 Windows 控制台取消检查和本轮 Linux SIGINT 检查均保留输出。旧的 Rust 1.88 结果早于 ORT 升级，不代表当前代码兼容旧工具链。**macOS、真实 minimal runtime、GPU/NPU 硬件及 GitHub Actions jobs 尚未实跑。** 本地结果不能代替这些运行。
 
+本轮 ZIP 打包另已在原生 Windows x64 和 WSL Linux x64 实跑通过，使用公开 Release 下载回来的真实模型、许可及官方 CPU 运行库；覆盖控制图状态数值、立体声 WAV 和真实模型等长、有限输出。新定义的 hosted workflow 尚未实跑，macOS 重定位、签名和加载仍需对应原生 runner 验证。
+
 ### 许可与再分发
 
 项目代码采用 **MIT OR Apache-2.0**，任选其一；见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。在独立源码包内附带两份完整文本是本项目的分发选择，不是 Cargo 的强制要求。
 
-依赖和权重保留各自的许可。Symphonia 为 MPL-2.0；rubato、Rust `ort` 绑定、ONNX Runtime 及可选 provider 另有许可和通知。源码获取与修改义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。模型权重和导出 ONNX 的使用与再分发授权需要单独确认，不能由 DeepFilterNet 源码许可推断。
+依赖和权重保留各自的许可。本项目提供的模型资产及对应清单已由维护者授权按 **MIT OR Apache-2.0** 分发，ZIP 内有 `models/LICENSE-MIT`、`models/LICENSE-APACHE` 和 `models/NOTICE.md`；不能将这一授权泛化到其他模型。Symphonia 为 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及可选 provider 另有条款。源码获取、修改及二进制分发义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
