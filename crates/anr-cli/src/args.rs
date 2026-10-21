@@ -67,11 +67,7 @@ pub struct DenoiseArgs {
     pub model: PathBuf,
     #[arg(long, value_enum, default_value_t = Backend::Ort)]
     pub backend: Backend,
-    #[arg(
-        long,
-        value_enum,
-        help = "ORT 执行 provider，ORT 默认 cpu；不能与 --backend gl 同用"
-    )]
+    #[arg(long, value_enum, help = "仅适用于 ORT 后端；省略时 ORT 默认 cpu")]
     pub provider: Option<Provider>,
     #[arg(long, default_value_t = 80.0, value_parser = strength, allow_hyphen_values = true)]
     pub strength: f32,
@@ -111,6 +107,9 @@ pub enum WavFormat {
 pub enum Backend {
     Ort,
     Gl,
+    Vk,
+    Wgpu,
+    Dx,
 }
 
 impl Backend {
@@ -118,6 +117,9 @@ impl Backend {
         match self {
             Self::Ort => "ort",
             Self::Gl => "gl",
+            Self::Vk => "vk",
+            Self::Wgpu => "wgpu",
+            Self::Dx => "dx",
         }
     }
 }
@@ -167,10 +169,8 @@ impl Provider {
 impl DenoiseArgs {
     pub fn validate(&self) -> Result<(), clap::Error> {
         let invalid = |message| clap::Error::raw(ErrorKind::ArgumentConflict, message);
-        if self.backend == Backend::Gl && self.provider.is_some() {
-            return Err(invalid(
-                "--provider 只适用于 ORT，不能与 --backend gl 同用。",
-            ));
+        if self.backend != Backend::Ort && self.provider.is_some() {
+            return Err(invalid("--provider 只适用于 ORT 后端。"));
         }
         let stdin = self.inputs.iter().any(|p| p == Path::new("-"));
         if self.inputs.len() > 1 && self.output.is_some() {

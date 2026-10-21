@@ -4,7 +4,7 @@
 
 ## English
 
-`anr` is a Rust audio denoising library and command-line tool. It runs a DeepFilterNet3 (DFN3) model with ONNX Runtime, or the optional model-specific OpenGL Compute backend.
+`anr` is a Rust audio denoising library and command-line tool. It runs DeepFilterNet3 (DFN3) with ONNX Runtime, or model-specific OpenGL, Vulkan, wgpu, and Direct3D 12 Compute backends without ORT.
 
 The library takes **48 kHz, mono `f32` samples**. For audio files, resampling, and multiple channels, use [`anr-cli`](crates/anr-cli/README.md). The CLI handles files, batches, and raw PCM streams; it does not provide microphone access, virtual audio devices, or drivers.
 
@@ -126,6 +126,9 @@ Adding `anr` alone does not enable model execution. Choose the Cargo features yo
 | --- | --- |
 | `ort` | Provides `DFN3`. With default features enabled, the CPU runtime is downloaded and copied at build time. |
 | `gl` | Provides `anr::gl::DFN3`, using native OpenGL 4.3 compute shaders without ORT. |
+| `vk` | Provides `anr::vk::DFN3`, using native Vulkan 1.1 compute without ORT or wgpu. |
+| `wgpu` | Provides `anr::wgpu::DFN3`, using wgpu hardware adapters without ORT. |
+| `dx` | Provides `anr::dx::DFN3`, using native Windows Direct3D 12 compute, not DirectML or wgpu. |
 | `ort-download-binaries` | Default download option; takes effect only when `ort` is enabled and does not enable a backend by itself. |
 | `ort-load-dynamic` | Loads your runtime. Use `default-features = false` with this feature to omit the downloader and its TLS dependencies; set `ORT_DYLIB_PATH` to the shared library file. |
 | `ort-cuda` / `ort-tensorrt` | Compiles support for CUDA / TensorRT. |
@@ -135,34 +138,45 @@ The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default
 
 Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, use `anr::ort::session::Session::builder(&environment)` and pass the resulting session to `DFN3::new(session)`.
 
-### OpenGL Compute without ONNX Runtime
+### Compute backends without ONNX Runtime
 
-Build the CLI with `cargo build -p anr-cli --release --no-default-features --features gl`, then select `--backend gl`. Do not pass an ORT `--provider`. The default CLI build and backend remain ORT; application release ZIPs are not changed to GL builds.
+Build the CLI with `cargo build -p anr-cli --release --no-default-features --features gl,vk,wgpu,dx`, then select `--backend gl`, `vk`, `wgpu`, or `dx`. You can enable any subset. Do not pass an ORT `--provider`. The default CLI build, backend, and application release ZIPs remain ORT.
 
-For the library:
+For example, a Vulkan-only library dependency:
 
 ```toml
-anr = { version = "0.1.0", default-features = false, features = ["gl"] }
+anr = { version = "0.1.0", default-features = false, features = ["vk"] }
 ```
 
-Construct `anr::gl::DFN3::from_file("models/dfn3.onnx")` and use the same `NoiseReduction` trait. No ORT environment, runtime library, Python, or model conversion is needed. The external ONNX file is decoded only for its parameters after checking SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected.
+Construct `anr::vk::DFN3::from_file("models/dfn3.onnx")`, or the matching `gl`, `wgpu`, or `dx` module, and use the same `NoiseReduction` trait. No ORT environment, runtime library, Python, model conversion, or external shader compiler is needed. The external ONNX file supplies parameters only, after SHA-256 validation against `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected.
 
-All inference, including the 960-point FFT, feature normalization, convolutions, grouped linear layers, five GRUs, spectral filtering, and overlap-add, runs in FP32 compute shaders. Weights and two state buffers stay on the GPU. Each reducer owns a worker-thread context; `run` waits for GPU output and is not a nonblocking audio-callback API. `lsnr` is not exposed, model latency is not compensated, and strength zero retains the original model's attenuation-branch behavior rather than bypassing the model.
+`anr-dfn3` shares the fixed execution plan, weight layout, worker, and WGSL operators. Naga translates the shaders to GLSL 4.3, SPIR-V, or HLSL for native backends; wgpu consumes WGSL directly. All inference, including the 960-point FFT, feature normalization, convolutions, grouped linear layers, five GRUs, spectral filtering, and overlap-add, runs in FP32 compute shaders. Weights and two state buffers remain on the GPU. Each reducer owns a worker thread; `run` waits for GPU output and is not a nonblocking audio-callback API. `lsnr` is not exposed, model latency is not compensated, and strength zero retains the model's attenuation-branch behavior rather than bypassing the model.
 
-Windows requires a native desktop GL 4.3 driver; Linux requires a hardware EGL device with desktop GL 4.3 and pbuffer support, without X11 `DISPLAY`. macOS native OpenGL is unsupported. Initialization errors are returned instead of falling back to CPU. Native Windows/RTX 2080 Ti regression compares streaming output against an independent ONNX reference; this is not a cross-device performance or audio-quality guarantee. Linux GL-only compilation, non-GPU CLI tests and Clippy also passed in WSL Ubuntu 24.04; its GPU tests were not run.
+| Backend | Driver/platform requirement |
+| --- | --- |
+| `gl` | Windows desktop OpenGL 4.3; Linux hardware EGL device with desktop GL 4.3 and pbuffer, without X11 `DISPLAY`. Not macOS. |
+| `vk` | Windows or Linux hardware Vulkan 1.1 device with compute queue. No window or surface. |
+| `wgpu` | Windows, Linux, or macOS hardware Vulkan, DX12, or Metal adapter, as available on that platform. No browser or software fallback. |
+| `dx` | Windows hardware D3D12 device and system D3DCompiler 47. No WARP, DirectML, or separately installed DXC. |
 
-Set `ANR_DFN3_MODEL` to the absolute model path and run `cargo test -p anr-gl -- --ignored --nocapture` to exercise the GPU regression. Its fixed reference covers strength changes, a partial final frame, reset, thread moves, and invalid-input state preservation. `tools/generate_gl_reference.py` regenerates the fixture using development-only `onnx==1.19.1` and `numpy==2.2.6`, not ONNX Runtime.
+Initialization failures return errors rather than falling back to CPU. All four backends passed streaming reference and raw/WAV/stereo/batch CLI tests on native Windows / RTX 2080 Ti. The compute-only build and 44 non-GPU tests also passed in WSL Ubuntu 24.04, with six hardware-dependent tests intentionally ignored. These results do not establish cross-device performance or sound quality; Linux GPU paths and macOS remain unverified.
+
+Set `ANR_DFN3_MODEL` to the absolute model path and run `cargo test -p anr-gl -p anr-vk -p anr-wgpu -p anr-dx -- --include-ignored --nocapture` on hardware supporting the selected packages. The reference covers strength changes, a partial final frame, reset, thread moves, and invalid-input state preservation. `tools/generate_gl_reference.py` regenerates all four fixtures using development-only `onnx==1.19.1` and `numpy==2.2.6`, not ONNX Runtime.
 
 ### Which crate should I use?
 
-Use `anr` in most Rust applications, or install `anr-cli` to work with files. The backend crates separate the interface from the ORT and OpenGL implementations.
+Use `anr` in most Rust applications, or install `anr-cli` to work with files. Backend crates separate each implementation from the common interface.
 
 | Crate | When to use it |
 | --- | --- |
-| `anr` | The usual starting point. Exports `NoiseReduction`, `Error`, and `Result`; adds ORT `DFN3` with `ort`, or `gl::DFN3` with `gl`. |
+| `anr` | The usual starting point. Exports `NoiseReduction`, `Error`, and `Result`; enables the corresponding `DFN3` through `ort`, `gl`, `vk`, `wgpu`, or `dx`. |
 | `anr-core` | You need only `NoiseReduction`, `Error`, and `Result`, without a model runtime dependency. |
 | `anr-ort` | You want the DFN3 ONNX Runtime implementation directly, or access to the same version of `ort`. |
 | `anr-gl` | You want the fixed-model native OpenGL 4.3 DFN3 implementation without ORT. |
+| `anr-vk` | Native Vulkan compute DFN3, without ORT or wgpu. |
+| `anr-wgpu` | wgpu compute DFN3, without ORT. |
+| `anr-dx` | Native Windows Direct3D 12 compute DFN3, without ORT, DirectML, or wgpu. |
+| `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
 
 `NoiseReduction` works as `Box<dyn NoiseReduction>`, and reducers can be moved between threads (`Send`). The library crates do not manage audio devices, decode WAV, resample, or split multiple channels. The CLI handles file decoding, resampling, and channels outside the library. No package downloads models automatically.
@@ -195,7 +209,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version changes and [CI and Release](.githu
 
 ## 简体中文
 
-`anr` 提供 Rust 音频降噪库和命令行工具，使用 DeepFilterNet3（DFN3）模型，支持 ONNX Runtime 和可选的模型专用 OpenGL Compute 后端。
+`anr` 提供 Rust 音频降噪库和命令行工具，使用 DeepFilterNet3（DFN3）模型，支持 ONNX Runtime，以及不依赖 ORT 的模型专用 OpenGL、Vulkan、wgpu 和 Direct3D 12 Compute 后端。
 
 库接口处理 **48 kHz、单声道的 `f32` 采样**。音频文件解码、采样率转换和多声道处理可以交给 [`anr-cli`](crates/anr-cli/README.md)。CLI 用于文件、批处理和 raw PCM 流，不提供麦克风访问、虚拟声卡或驱动。
 
@@ -317,6 +331,9 @@ cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> 
 | --- | --- |
 | `ort` | 提供 `DFN3`；保留默认 features 时，会在构建中下载并复制 CPU 运行库。 |
 | `gl` | 提供 `anr::gl::DFN3`，直接使用原生 OpenGL 4.3 Compute Shader，不依赖 ORT。 |
+| `vk` | 提供 `anr::vk::DFN3`，使用原生 Vulkan 1.1 Compute，不依赖 ORT 或 wgpu。 |
+| `wgpu` | 提供 `anr::wgpu::DFN3`，使用 wgpu 的硬件 adapter，不依赖 ORT。 |
+| `dx` | 提供 `anr::dx::DFN3`，使用原生 Windows Direct3D 12 Compute，不是 DirectML 或 wgpu。 |
 | `ort-download-binaries` | 默认下载选项，只在启用 `ort` 后生效，本身不会启用后端。 |
 | `ort-load-dynamic` | 加载自备运行库；配合 `default-features = false` 可去掉下载器和 TLS 构建依赖，通过 `ORT_DYLIB_PATH` 指向共享库文件。 |
 | `ort-cuda` / `ort-tensorrt` | 编入 CUDA / TensorRT 支持。 |
@@ -326,28 +343,39 @@ cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> 
 
 创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
 
-### 不依赖 ONNX Runtime 的 OpenGL Compute
+### 不依赖 ONNX Runtime 的 Compute 后端
 
-CLI 使用 `cargo build -p anr-cli --release --no-default-features --features gl` 构建，运行时传 `--backend gl`，不要传 ORT 的 `--provider`。CLI 默认构建、默认后端和应用 Release ZIP 仍使用 ORT。
+CLI 使用 `cargo build -p anr-cli --release --no-default-features --features gl,vk,wgpu,dx` 构建，也可只启用其中部分；运行时明确传 `--backend gl`、`vk`、`wgpu` 或 `dx`，不要传 ORT 的 `--provider`。CLI 默认构建、默认后端和应用 Release ZIP 仍使用 ORT。
 
-库依赖启用 `default-features = false, features = ["gl"]`，通过 `anr::gl::DFN3::from_file("models/dfn3.onnx")` 创建实例，继续使用 `NoiseReduction`。不需要 ORT 环境、运行库、Python 或模型转换。后端只从外置 ONNX 文件中读取参数，并校验 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，拒绝其他导出版本。
+库依赖例如启用 `default-features = false, features = ["vk"]`，通过 `anr::vk::DFN3::from_file("models/dfn3.onnx")` 创建实例；其余对应 `gl`、`wgpu`、`dx` 模块，继续使用 `NoiseReduction`。不需要 ORT 环境、运行库、Python、模型转换或外部 shader 编译器。仅从外置 ONNX 读取参数，并校验 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，拒绝其他导出版本。
 
-960 点 FFT、特征归一化、卷积、分组线性层、五个 GRU、频谱滤波和 overlap-add 全部使用 FP32 Compute Shader。权重和两块状态缓冲常驻 GPU；每个实例由自己的工作线程持有 context。`run` 会等待 GPU 输出，不是非阻塞音频 callback 接口。不返回 `lsnr`，不补偿模型延迟；强度为零保留原模型的衰减分支行为，不表示原音旁路。
+`anr-dfn3` 共用固定执行顺序、权重布局、工作线程和 WGSL 算子；Naga 为原生后端生成 GLSL 4.3、SPIR-V 或 HLSL，wgpu 直接使用 WGSL。960 点 FFT、特征归一化、卷积、分组线性层、五个 GRU、频谱滤波和 overlap-add 全部使用 FP32 Compute Shader。权重和两块状态缓冲常驻 GPU；每个实例持有自己的工作线程。`run` 等待 GPU 输出，不是非阻塞音频 callback 接口。不返回 `lsnr`，不补偿模型延迟；强度为零保留原模型的衰减分支行为，不表示原音旁路。
 
-Windows 需要原生桌面 GL 4.3 驱动；Linux 需要支持桌面 GL 4.3 与 pbuffer 的硬件 EGL device，不依赖 X11 `DISPLAY`；不支持 macOS 原生 OpenGL。初始化失败直接返回错误，不退回 CPU。已在原生 Windows / RTX 2080 Ti 上以独立 ONNX 数值基准验证连续帧输出，不据此保证其他设备的性能或音质。WSL Ubuntu 24.04 已通过 GL-only 编译、非 GPU CLI 测试和 Clippy，未运行 Linux GPU 测试。
+| 后端 | 驱动与平台要求 |
+| --- | --- |
+| `gl` | Windows 桌面 OpenGL 4.3；Linux 硬件 EGL device 需支持桌面 GL 4.3 与 pbuffer，不依赖 X11 `DISPLAY`；不支持 macOS。 |
+| `vk` | Windows 或 Linux 的硬件 Vulkan 1.1 device，提供 compute queue；不创建窗口或 surface。 |
+| `wgpu` | Windows、Linux 或 macOS 上可用的硬件 Vulkan、DX12 或 Metal adapter；不是浏览器后端，不使用软件 fallback。 |
+| `dx` | Windows 硬件 D3D12 device 和系统 D3DCompiler 47；不使用 WARP、DirectML，也不要求另装 DXC。 |
 
-将 `ANR_DFN3_MODEL` 设为模型绝对路径后，运行 `cargo test -p anr-gl -- --ignored --nocapture` 可执行 GPU 回归，覆盖强度切换、最后不足一帧、reset、跨线程移交和无效输入不改变状态。基准由 `tools/generate_gl_reference.py` 使用开发依赖 `onnx==1.19.1`、`numpy==2.2.6` 生成，不使用 ONNX Runtime。
+初始化失败直接返回错误，不退回 CPU。四种后端均已在原生 Windows / RTX 2080 Ti 上通过连续帧独立 ONNX 数值基准及 raw/WAV、立体声、批处理 CLI 验收；WSL Ubuntu 24.04 另通过 Compute-only 编译和 44 项非 GPU 测试，6 项硬件测试保留 ignored。不据此保证跨设备性能或音质；Linux GPU 路径和 macOS 尚未实跑。
+
+将 `ANR_DFN3_MODEL` 设为模型绝对路径后，运行 `cargo test -p anr-gl -p anr-vk -p anr-wgpu -p anr-dx -- --include-ignored --nocapture`，应按实际硬件选择包。数值回归覆盖强度切换、最后不足一帧、reset、跨线程移交和无效输入不改变状态。`tools/generate_gl_reference.py` 使用开发依赖 `onnx==1.19.1`、`numpy==2.2.6` 一次生成四份基准，不使用 ONNX Runtime。
 
 ### 各个包怎么选
 
-Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。后端包分别提供 ORT 和 OpenGL 实现。
+Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各后端包将具体实现与公共接口分开。
 
 | 包 | 什么时候用 |
 | --- | --- |
-| `anr` | 一般使用。提供 `NoiseReduction`、`Error`、`Result`；启用 `ort` 后提供 ORT `DFN3`，启用 `gl` 后提供 `gl::DFN3`。 |
+| `anr` | 一般使用。提供 `NoiseReduction`、`Error`、`Result`；通过 `ort`、`gl`、`vk`、`wgpu` 或 `dx` 启用对应 `DFN3`。 |
 | `anr-core` | 只需要 `NoiseReduction`、`Error` 和 `Result`，不希望引入模型运行库。 |
 | `anr-ort` | 直接使用 DFN3 的 ONNX Runtime 实现，或使用它提供的同一版本 `ort`。 |
 | `anr-gl` | 直接使用固定模型的原生 OpenGL 4.3 DFN3 实现，不依赖 ORT。 |
+| `anr-vk` | 直接使用原生 Vulkan Compute DFN3，不依赖 ORT 或 wgpu。 |
+| `anr-wgpu` | 使用 wgpu Compute DFN3，不依赖 ORT。 |
+| `anr-dx` | 使用原生 Windows Direct3D 12 Compute DFN3，不依赖 ORT、DirectML 或 wgpu。 |
+| `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
 
 `NoiseReduction` 支持 `Box<dyn NoiseReduction>`，降噪器也可以移交给另一个线程（`Send`）。库包不负责音频设备管理、WAV 解码、采样率转换或多声道拆分；CLI 在库外处理文件解码、重采样和多声道。所有包都不自动下载模型。

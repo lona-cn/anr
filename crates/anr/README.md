@@ -92,6 +92,7 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 ### CPU by default; other devices need configuration
 
 - `ort`: provides `DFN3`. With default features, downloads and copies CPU ONNX Runtime libraries at build time; requires network access and platform support.
+- `gl`, `vk`, `wgpu`, `dx`: enable the corresponding compute backend and `anr::<backend>::DFN3`, without enabling ORT.
 - `ort-download-binaries`: the default, weak download option. It does not activate `anr-ort` by itself, so the default crate still depends only on `anr-core`.
 - `ort-load-dynamic`: loads your runtime. Disable defaults to omit the downloader and TLS dependencies. Set `ORT_DYLIB_PATH` to a compatible shared library file before initialization.
 - `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, `ort-xnnpack`: compile support for the corresponding libraries. They do not select a GPU or install drivers or other required libraries.
@@ -104,11 +105,13 @@ anr = { version = "0.1.0", default-features = false, features = ["ort-load-dynam
 
 Call `anr::ort::initialize_runtime()` before `anr::ort::init().build()` to return dynamic-loading failures instead of entering the lazy loader. The helper does not build an environment; your application owns and configures it. Share that `Environment` across denoisers. `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, one intra-op thread, and no spinning. To choose another provider, use `anr::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
 
-### OpenGL without ORT
+### Compute backends without ORT
 
-Enable `default-features = false, features = ["gl"]` and construct `anr::gl::DFN3::from_file(path)`. It implements the same `NoiseReduction` interface without an ORT environment or runtime. Each instance owns a worker-thread GL context and GPU-resident state; `run` is synchronous.
+Enable `default-features = false, features = ["vk"]` and construct `anr::vk::DFN3::from_file(path)`, or select `gl`, `wgpu`, or `dx` with the corresponding module and feature. Each implements `NoiseReduction`, owns a worker thread and GPU-resident weights/state, and waits synchronously for each output. The common fixed plan and WGSL kernels live in `anr-dfn3`; native GL/Vulkan/D3D12 use Naga-generated GLSL/SPIR-V/HLSL. No backend substitutes ORT or CPU inference.
 
-Requires Windows desktop OpenGL 4.3 or a Linux hardware EGL device with desktop GL 4.3/pbuffer support; macOS is unsupported. The original external ONNX file is used only for parameters and must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. No model conversion or Python is required. Other exports and unsupported drivers fail explicitly, without a CPU fallback. The model's strength-zero behavior is preserved; it is not an audio bypass.
+`gl` requires Windows desktop GL 4.3 or Linux hardware EGL with desktop GL 4.3/pbuffer; `vk` requires Windows/Linux hardware Vulkan 1.1; `wgpu` selects a native hardware Vulkan/DX12/Metal adapter on Windows/Linux/macOS; `dx` requires Windows hardware D3D12 and system D3DCompiler 47, without WARP, DirectML, or wgpu. Windows / RTX 2080 Ti has exercised all four; other platforms' GPU paths are not verified.
+
+The original external ONNX file supplies parameters only and must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. No model conversion, Python, or external shader compiler is required. Other exports and unsupported drivers fail explicitly. Strength zero preserves the model's attenuation branch; it is not an audio bypass.
 
 ### License
 
@@ -206,6 +209,7 @@ cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> 
 ### 默认用 CPU，其他设备需要自己配置
 
 - `ort`：提供 `DFN3`；保留默认 features 时，在构建中下载并复制 CPU 运行库，需要网络和平台支持。
+- `gl`、`vk`、`wgpu`、`dx`：启用对应 Compute 后端和 `anr::<backend>::DFN3`，不会启用 ORT。
 - `ort-download-binaries`：默认启用的弱下载选项，不会单独激活 `anr-ort`，所以默认 crate 仍只依赖 `anr-core`。
 - `ort-load-dynamic`：加载自备运行库。关闭 defaults 可去掉下载器和 TLS 依赖；初始化前将 `ORT_DYLIB_PATH` 设为兼容的共享库文件。
 - `ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack`：编入对应库的支持，不会自动选择 GPU，也不会安装驱动或其他必需的库。
@@ -218,11 +222,13 @@ anr = { version = "0.1.0", default-features = false, features = ["ort-load-dynam
 
 在 `anr::ort::init().build()` 前调用 `anr::ort::initialize_runtime()`，让动态加载失败正常返回，避免进入上游的隐式加载路径。这个函数不创建环境，环境由应用持有和配置，多个降噪实例共享同一个 `Environment`。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以单线程执行算子并禁用忙等待。若要选其他 provider，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
 
-### 不使用 ORT 的 OpenGL 后端
+### 不使用 ORT 的 Compute 后端
 
-启用 `default-features = false, features = ["gl"]`，使用 `anr::gl::DFN3::from_file(path)` 创建实例，继续调用 `NoiseReduction`，无需 ORT 环境或运行库。每个实例由工作线程持有 GL context，状态常驻 GPU；`run` 同步返回输出。
+例如启用 `default-features = false, features = ["vk"]`，使用 `anr::vk::DFN3::from_file(path)` 创建实例；其余后端对应 `gl`、`wgpu`、`dx` feature 和模块。均实现 `NoiseReduction`，每实例持有工作线程、GPU 常驻权重和状态，`run` 同步返回输出。`anr-dfn3` 共用固定执行顺序和 WGSL 算子，原生 GL/Vulkan/D3D12 使用 Naga 生成 GLSL/SPIR-V/HLSL；不替换成 ORT 或 CPU 推理。
 
-Windows 需要桌面 OpenGL 4.3；Linux 需要支持桌面 GL 4.3/pbuffer 的硬件 EGL device；不支持 macOS。模型仍是原始外置 ONNX 文件，只读取参数，并要求 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。无需模型转换或 Python。其他模型或不支持的驱动明确报错，不退回 CPU。保留原模型强度为零时的行为，不将其改为音频旁路。
+`gl` 需要 Windows 桌面 GL 4.3 或 Linux 硬件 EGL 的桌面 GL 4.3/pbuffer；`vk` 需要 Windows/Linux 硬件 Vulkan 1.1；`wgpu` 在 Windows/Linux/macOS 选择原生硬件 Vulkan/DX12/Metal adapter；`dx` 需要 Windows 硬件 D3D12 与系统 D3DCompiler 47，不使用 WARP、DirectML 或 wgpu。四种均已在 Windows / RTX 2080 Ti 实跑，其他平台的 GPU 路径未验证。
+
+原始外置 ONNX 只提供参数，要求 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。无需模型转换、Python 或外部 shader 编译器。其他模型或不支持的驱动明确报错。强度为零保留原模型的衰减分支，不表示原音旁路。
 
 ### 许可
 

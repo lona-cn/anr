@@ -14,11 +14,17 @@ include = ["src/**", "examples/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"
 anr-core.workspace = true
 anr-ort = { workspace = true, optional = true }
 anr-gl = { workspace = true, optional = true }
+anr-vk = { workspace = true, optional = true }
+anr-wgpu = { workspace = true, optional = true }
+anr-dx = { workspace = true, optional = true }
 
 [features]
 default = ["ort-download-binaries"]
 ort = ["dep:anr-ort"]
 gl = ["dep:anr-gl"]
+vk = ["dep:anr-vk"]
+wgpu = ["dep:anr-wgpu"]
+dx = ["dep:anr-dx"]
 ort-download-binaries = ["anr-ort?/download-binaries"]
 ort-load-dynamic = ["ort", "anr-ort/load-dynamic"]
 ort-cuda = ["ort", "anr-ort/cuda"]

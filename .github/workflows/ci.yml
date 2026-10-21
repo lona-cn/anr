@@ -137,9 +137,13 @@ jobs:
       - name: Build actual native CLI with CPU backend
         run: cargo build --locked -p anr-cli
       - name: Run workspace and native CLI process tests
-        run: cargo test --locked --workspace --all-targets -- --include-ignored
+        run: cargo test --locked --workspace --all-targets
+      - name: Run CPU DFN3 real-model test
+        run: cargo test --locked -p anr-ort --test dfn3 -- --ignored
       - name: Run CLI without inference backend
         run: cargo test --locked -p anr-cli --no-default-features
+      - name: Run compute CLI tests without requiring GPU hardware
+        run: cargo test --locked -p anr-cli --no-default-features --features gl,vk,wgpu,dx
       - name: Formatting and lint gate
         run: |
           cargo fmt --all -- --check

@@ -4,7 +4,7 @@
 
 ## English
 
-`anr-cli` installs the `anr` command for denoising audio files, processing batches one file at a time, and reading or writing audio through stdin/stdout. It calls DFN3 through `anr`, using ONNX Runtime by default or the optional fixed-model OpenGL Compute backend, and handles decoding, band-limited resampling, and multiple channels itself. You don't need FFmpeg or Python to run it.
+`anr-cli` installs the `anr` command for denoising audio files, serial batches, and stdin/stdout audio. It calls DFN3 through `anr`: ONNX Runtime by default, or model-specific OpenGL, Vulkan, wgpu, and Direct3D 12 Compute backends without ORT. The CLI handles decoding, band-limited resampling, and multiple channels. Runtime use requires neither FFmpeg nor Python.
 
 Building from source requires the **latest stable Rust toolchain**. You must supply a model explicitly: none is packaged, downloaded automatically, or picked up from a `models/` directory in the checkout. For the ORT backend, it must have exactly these three inputs and three outputs, all `f32`:
 
@@ -91,8 +91,8 @@ anr backends [--json]
 | `--output PATH` | Destination for one input; `-` means stdout. Cannot be combined with `--output-dir`. |
 | `--output-dir DIR` | Processes files serially, using each input's stem with `.wav`, or `.f32le` when raw output is selected. Does not rename colliding outputs. |
 | `--model PATH` | Required model path. |
-| `--backend ort\|gl` | Defaults to `ort`. `gl` requires the `gl` Cargo feature and the exact supported model described below. |
-| `--provider cpu` | ORT only; defaults to `cpu` when omitted for ORT. Other providers need the corresponding Cargo feature and runtime environment. Any explicit `--provider` with `--backend gl` is an argument error. |
+| `--backend ort\|gl\|vk\|wgpu\|dx` | Defaults to `ort`. Each compute backend requires its matching Cargo feature and the exact supported model below. |
+| `--provider cpu` | ORT only; omitted means `cpu` for ORT. Other providers require matching features and runtime support. Any explicit `--provider` with a compute backend is an argument error. |
 | `--strength 80` | Defaults to 80. Accepts finite values in `0..=100`; rejects NaN, infinity, and out-of-range values rather than clamping them. |
 | `--input-format auto\|f32le` | Defaults to detecting audio with headers. Raw input requires explicit `f32le`. |
 | `--input-rate HZ` / `--input-channels N` | Required positive values for raw input. Cannot override the specifications in an audio header. |
@@ -168,7 +168,7 @@ cargo build -p anr-cli --release
 cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
-cargo build -p anr-cli --no-default-features --features gl
+cargo build -p anr-cli --no-default-features --features gl,vk,wgpu,dx
 ```
 
 With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. CUDA/TensorRT, DirectML, CoreML, and XNNPACK flags forward to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them.
@@ -177,17 +177,19 @@ For example, build with DirectML on Windows and select `--provider directml`, or
 
 For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
 
-The optional `gl` feature selects a separate native OpenGL 4.3 Compute implementation; it does not enable ONNX Runtime. Build with `--no-default-features --features gl` for GL only, or add `--features gl` to the default build to retain both backends. Select it explicitly:
+The optional `gl`, `vk`, `wgpu`, and `dx` features enable independent compute backends without enabling ONNX Runtime. Use `--no-default-features` to omit ORT, and enable any subset of these features. Explicitly select the matching backend:
 
 ```text
-anr denoise input.wav --model /path/to/dfn3.onnx --backend gl --output clean.wav
+anr denoise input.wav --model /path/to/dfn3.onnx --backend vk --output clean.wav
 ```
 
-GL uses the original ONNX file only as a parameter container, not as a generic executable graph. It accepts the fixed DFN3 model with SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; a different export is rejected even if its ports have the same shapes. The model runs at 48 kHz with 480-sample frames, with the same CLI resampling, per-channel state, strength, reset, and output-length handling. Native context support targets Windows and Linux desktop drivers with OpenGL 4.3 Compute; macOS is unsupported. Driver/context initialization may still fail, and no performance or hardware-coverage claim is made here.
+All four use the original ONNX as a parameter container, not a generic executable graph. The fixed model must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected even with identical port shapes. They share the fixed execution plan and WGSL operators through `anr-dfn3`, execute FFT, neural network, and synthesis on GPU, and preserve 48 kHz / 480-sample framing, CLI resampling, independent channel state, strength, reset, and exact output length. Strength zero is the original attenuation branch, not an audio bypass.
 
-Do not pass `--provider` with GL, including `--provider cpu`. `backends --json` lists both backends without creating a GL context: GL has no ORT providers and its `runtime_available` remains `null`. Verbose processing diagnostics name the backend; provider diagnostics are emitted only for ORT.
+`gl` requires Windows desktop GL 4.3 or Linux hardware EGL with desktop GL 4.3/pbuffer; `vk` requires Windows/Linux hardware Vulkan 1.1; `wgpu` uses a native hardware Vulkan/DX12/Metal adapter on Windows/Linux/macOS; `dx` uses Windows hardware D3D12 and system D3DCompiler 47. Native VK/DX do not go through wgpu, and DX is not DirectML. No backend silently selects CPU/software rendering. Unsupported hardware or initialization failures are errors; macOS GPU execution has not been verified.
 
-GL's real-model CLI tests are opt-in. Set `ANR_DFN3_MODEL` to that original ONNX file and run `cargo test -p anr-cli --no-default-features --features gl --test cli gl_ -- --ignored` on a machine with the required driver. These tests exercise raw/WAV audio, independent stereo state, partial-frame length, batch reset, and strength. Their presence is not a claim that they have run on any particular platform.
+Do not pass `--provider` with compute backends, including `--provider cpu`. `backends --json` lists all five names without creating a GPU device. Compute entries have no ORT providers and leave `runtime_available` as `null`. Verbose diagnostics identify the selected backend; only ORT emits provider diagnostics.
+
+Real-model CLI tests are opt-in. Set `ANR_DFN3_MODEL` and run `cargo test -p anr-cli --no-default-features --features gl,vk,wgpu,dx --test cli compute_ -- --include-ignored`, enabling only packages supported by your machine. Raw/WAV, independent stereo state, partial-frame length, batch reset, and strength passed for all four on native Windows / RTX 2080 Ti. This is not a sound-quality or cross-platform performance claim.
 
 
 ### What has been tested
@@ -196,7 +198,7 @@ CI is configured for four native runners: Windows x64 (`windows-2025`), Linux x6
 
 The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
 
-Current local publishing-safety checks use Rust 1.99 on Windows x64 (65 tests) and WSL Ubuntu 24.04 x64 (66 tests), including real DFN3 inference. The no-backend CLI has 38 passing tests. Three isolated dynamic-runtime tests cover repeated failure, recovery with inference, and reuse without changing the host environment; separate CLI checks cover missing-library errors through CPU and XNNPACK paths. The installed release also ran from an unrelated directory: 48,001 samples through the real model, unknown-length WAV stdin, closed JSON stdout, and protected case aliases. Both failure smoke paths preserved the existing target without temporary files. Earlier Windows console-cancellation checks and current Linux SIGINT checks preserved outputs. Earlier Rust 1.88 results predate the ORT upgrade and do not establish compatibility with the current code. **macOS, real minimal runtimes, GPU/NPU hardware, and GitHub Actions jobs have not been run.** Local results do not stand in for those runs.
+Earlier ORT publishing-safety checks used Rust 1.99 on Windows x64 (65 tests) and WSL Ubuntu 24.04 x64 (66 tests), including real DFN3 inference; the no-backend CLI had 38 passing tests. Isolated dynamic-runtime tests covered repeated failure, recovery with inference, and reuse without host-environment changes, with missing-library errors through CPU and XNNPACK. Installed-release checks covered an unrelated working directory, 48,001 real-model samples, unknown-length WAV stdin, closed JSON stdout, protected case aliases, and cancellation preserving old outputs. These are historical ORT results, not the current compute test count. **macOS, real minimal runtimes, ORT GPU/NPU execution providers, and hosted GitHub Actions jobs remain unverified locally.**
 
 The ZIP packaging changes have additionally passed on native Windows x64 and WSL Linux x64 with the real downloaded model and official CPU runtime, including control-state values, stereo WAV, and exact-length finite real-model output. The model and its licenses were downloaded back from the public model Release and checked. The new hosted workflow has not been run locally; macOS relocation/signing still requires its native runner.
 
@@ -208,7 +210,7 @@ Dependencies and model weights keep their own licenses. The supplied model asset
 
 ## 简体中文
 
-`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择固定模型的 OpenGL Compute 后端，自行完成解码、带限重采样和多声道处理。运行时不需要 FFmpeg 或 Python。
+`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择不依赖 ORT 的模型专用 OpenGL、Vulkan、wgpu 和 Direct3D 12 Compute 后端。CLI 自行完成解码、带限重采样和多声道处理，运行时不需要 FFmpeg 或 Python。
 
 从源码构建需要 **最新 Rust stable 工具链**。Rust crate / `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 附带模型和运行库。无论哪种方式，`--model` 都必须明确传入，也不会自行选用源码目录里的 `models/` 文件。ORT 后端的模型只能有下表的三个输入和三个输出，类型都必须为 `f32`：
 
@@ -295,8 +297,8 @@ anr backends [--json]
 | `--output PATH` | 单输入的目标文件；`-` 表示 stdout。与 `--output-dir` 互斥。 |
 | `--output-dir DIR` | 逐个处理文件，按输入文件名去掉扩展名后生成 `.wav`，明确选择 raw 时生成 `.f32le`。同名结果不自动改名。 |
 | `--model PATH` | 必填的模型路径。 |
-| `--backend ort\|gl` | 默认 `ort`。`gl` 需启用 `gl` Cargo feature，并使用后文说明的固定模型。 |
-| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应的 Cargo feature 和运行环境。`--backend gl` 与任何显式 `--provider` 同用均为参数错误。 |
+| `--backend ort\|gl\|vk\|wgpu\|dx` | 默认 `ort`。各 Compute 后端需要对应 Cargo feature 和后文说明的固定模型。 |
+| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应 feature 和运行环境。任何 Compute 后端与显式 `--provider` 同用均为参数错误。 |
 | `--strength 80` | 默认 80；必须是 `0..=100` 的有限数值，拒绝 NaN、无穷和越界值，不静默修正。 |
 | `--input-format auto\|f32le` | 默认探测带头音频；raw 必须明确选 `f32le`。 |
 | `--input-rate HZ` / `--input-channels N` | raw 输入必填的正数；带头音频不能用它们覆盖真实规格。 |
@@ -372,7 +374,7 @@ cargo build -p anr-cli --release
 cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
 cargo build -p anr-cli --no-default-features --features ort-load-dynamic
-cargo build -p anr-cli --no-default-features --features gl
+cargo build -p anr-cli --no-default-features --features gl,vk,wgpu,dx
 ```
 
 完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。CUDA/TensorRT、DirectML、CoreML、XNNPACK 等 flag 转发到 `anr`，需要对应平台、库和驱动；选择 feature 不会安装它们。
@@ -381,17 +383,19 @@ cargo build -p anr-cli --no-default-features --features gl
 
 动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
 
-可选 `gl` feature 使用独立的原生 OpenGL 4.3 Compute 实现，不会启用 ONNX Runtime。用 `--no-default-features --features gl` 构建仅 GL 版本，或在默认构建上添加 `--features gl` 保留两种后端。运行时需明确选择：
+可选 `gl`、`vk`、`wgpu`、`dx` features 启用独立的 Compute 后端，不会启用 ONNX Runtime。使用 `--no-default-features` 去掉 ORT，并按需启用其中部分；运行时明确选择：
 
 ```text
-anr denoise input.wav --model /path/to/dfn3.onnx --backend gl --output clean.wav
+anr denoise input.wav --model /path/to/dfn3.onnx --backend vk --output clean.wav
 ```
 
-GL 仅将原 ONNX 文件作为参数容器，不执行通用 ONNX 图。只接受 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 的固定 DFN3 模型；即使端口大小相同，其他导出版本也会拒绝。模型以 48 kHz、480 采样帧运行，沿用 CLI 的重采样、声道独立状态、strength、重置和输出长度处理。原生 context 面向具备 OpenGL 4.3 Compute 的 Windows、Linux 桌面驱动；不支持 macOS。驱动/context 初始化仍可能失败，此处不作性能或硬件覆盖结论。
+四种后端都只将原 ONNX 用作参数容器，不执行通用 ONNX 图。固定模型 SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，即使端口大小一致，其他导出版本也会拒绝。通过 `anr-dfn3` 共用固定执行顺序和 WGSL 算子，FFT、神经网络及音频合成都在 GPU 执行；保留 48 kHz / 480 采样分帧、CLI 重采样、声道独立状态、strength、reset 和精确输出长度。强度为零保留原衰减分支，不表示原音旁路。
 
-GL 不能传 `--provider`，包括 `--provider cpu`。`backends --json` 会同时列出两种后端，但不创建 GL context；GL 没有 ORT provider，`runtime_available` 保持 `null`。verbose 处理日志显示 backend，仅 ORT 显示 provider。
+`gl` 需要 Windows 桌面 GL 4.3 或 Linux 硬件 EGL 的桌面 GL 4.3/pbuffer；`vk` 需要 Windows/Linux 硬件 Vulkan 1.1；`wgpu` 在 Windows/Linux/macOS 使用原生硬件 Vulkan/DX12/Metal adapter；`dx` 使用 Windows 硬件 D3D12 与系统 D3DCompiler 47。原生 VK/DX 不经 wgpu，DX 不是 DirectML。不静默选择 CPU 或软件渲染；硬件不支持或初始化失败会报错。macOS GPU 路径尚未验证。
 
-GL 真实模型 CLI 测试需主动启用：把 `ANR_DFN3_MODEL` 指向该原始 ONNX，在具备所需驱动的机器执行 `cargo test -p anr-cli --no-default-features --features gl --test cli gl_ -- --ignored`。测试覆盖 raw/WAV、立体声独立状态、非整帧长度、批处理重置及 strength。添加了测试不代表已在任何特定平台执行通过。
+Compute 后端不能传 `--provider`，包括 `--provider cpu`。`backends --json` 列出五个名称，但不创建 GPU device；Compute 项没有 ORT provider，`runtime_available` 保持 `null`。verbose 日志显示所选 backend，仅 ORT 显示 provider。
+
+真实模型 CLI 测试需主动启用：将 `ANR_DFN3_MODEL` 指向模型，执行 `cargo test -p anr-cli --no-default-features --features gl,vk,wgpu,dx --test cli compute_ -- --include-ignored`，按机器支持情况选择 features。四种后端均已在原生 Windows / RTX 2080 Ti 上通过 raw/WAV、立体声独立状态、非整帧长度、批处理重置和 strength 验收，不据此宣称音质或跨平台性能。
 
 
 ### 哪些已经测过
@@ -400,7 +404,7 @@ CI 配置了四种原生 runner：Windows x64（`windows-2025`）、Linux x64（
 
 自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
 
-本轮发布安全检查在 Rust 1.99 上通过：Windows x64 65 项、WSL Ubuntu 24.04 x64 66 项，包含真实 DFN3 推理；无后端 CLI 38 项。三项独立进程动态运行库回归覆盖重复失败、恢复后推理和不改宿主环境的复用；另验 CPU/XNNPACK 路径的缺库错误。安装后的 release 从无关目录完成真实模型 48,001 个采样、未知长度 WAV stdin、JSON stdout 提前关闭和大小写别名保护；两种失败 smoke 均保留旧目标且无临时文件。此前 Windows 控制台取消检查和本轮 Linux SIGINT 检查均保留输出。旧的 Rust 1.88 结果早于 ORT 升级，不代表当前代码兼容旧工具链。**macOS、真实 minimal runtime、GPU/NPU 硬件及 GitHub Actions jobs 尚未实跑。** 本地结果不能代替这些运行。
+此前 ORT 发布安全检查使用 Rust 1.99：Windows x64 65 项、WSL Ubuntu 24.04 x64 66 项，包含真实 DFN3；无后端 CLI 当时为 38 项。独立进程测试覆盖动态运行库重复失败、恢复后推理、不改宿主环境的复用，以及 CPU/XNNPACK 缺库错误。安装后从无关目录验过真实模型 48,001 个采样、未知长度 WAV stdin、提前关闭 JSON stdout、大小写别名保护，以及取消时保留旧目标。这些是历史 ORT 结果，不是当前 Compute 测试数量。**macOS、真实 minimal runtime、ORT GPU/NPU execution provider 及 hosted GitHub Actions jobs 仍未在本地实跑。**
 
 本轮 ZIP 打包另已在原生 Windows x64 和 WSL Linux x64 实跑通过，使用公开 Release 下载回来的真实模型、许可及官方 CPU 运行库；覆盖控制图状态数值、立体声 WAV 和真实模型等长、有限输出。新定义的 hosted workflow 尚未实跑，macOS 重定位、签名和加载仍需对应原生 runner 验证。
 

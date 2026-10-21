@@ -159,7 +159,13 @@ fn assert_code(output: &Output, expected: i32) {
     );
 }
 
-#[cfg(any(feature = "ort", feature = "gl"))]
+#[cfg(any(
+    feature = "ort",
+    feature = "gl",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 fn assert_bytes(actual: &[u8], expected: &[u8]) {
     let mismatch = actual.iter().zip(expected).position(|(a, b)| a != b);
     assert!(
@@ -210,7 +216,13 @@ fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32]) {
     writer.finalize().unwrap();
 }
 
-#[cfg(any(feature = "ort", feature = "gl"))]
+#[cfg(any(
+    feature = "ort",
+    feature = "gl",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 fn read_wav(path: &Path) -> (hound::WavSpec, Vec<f32>) {
     let mut reader = hound::WavReader::open(path).unwrap();
     let spec = reader.spec();
@@ -281,14 +293,21 @@ fn backend_inventory_is_json_without_loading_a_model() {
         assert!(provider.get("runtime_available").is_some());
         assert!(provider["runtime_available"].is_null());
     }
-    let gl = backends
-        .iter()
-        .find(|backend| backend["name"] == "gl")
-        .unwrap();
-    assert_eq!(gl["compiled"], cfg!(feature = "gl"));
-    assert!(gl["providers"].as_array().unwrap().is_empty());
-    assert!(gl.get("runtime_available").is_some());
-    assert!(gl["runtime_available"].is_null());
+    for (name, compiled) in [
+        ("gl", cfg!(feature = "gl")),
+        ("vk", cfg!(feature = "vk")),
+        ("wgpu", cfg!(feature = "wgpu")),
+        ("dx", cfg!(feature = "dx")),
+    ] {
+        let backend = backends
+            .iter()
+            .find(|backend| backend["name"] == name)
+            .unwrap();
+        assert_eq!(backend["compiled"], compiled, "{name}");
+        assert!(backend["providers"].as_array().unwrap().is_empty());
+        assert!(backend.get("runtime_available").is_some());
+        assert!(backend["runtime_available"].is_null());
+    }
 }
 
 #[test]
@@ -1098,82 +1117,102 @@ fn publish_missing_dynamic_runtime_returns_error_without_touching_output() {
     }
 }
 
+fn compute_backends() -> impl Iterator<Item = &'static str> {
+    [
+        ("gl", cfg!(feature = "gl")),
+        ("vk", cfg!(feature = "vk")),
+        ("wgpu", cfg!(feature = "wgpu")),
+        ("dx", cfg!(feature = "dx")),
+    ]
+    .into_iter()
+    .filter_map(|(name, compiled)| compiled.then_some(name))
+}
+
 #[test]
-fn gl_rejects_an_explicit_ort_provider_before_creating_output() {
+fn compute_rejects_an_explicit_ort_provider_before_creating_output() {
     let dir = tempfile::tempdir().unwrap();
     let model = model(dir.path());
     let output = dir.path().join("never-created.f32le");
-    for provider in ["cpu", "cuda"] {
-        let result = run(
-            raw_command(&model, Path::new("-"), &output, 1).args([
-                "--backend",
-                "gl",
-                "--provider",
-                provider,
-            ]),
-            vec![],
-            false,
-        );
-        assert_code(&result, 2);
-        assert!(result.stdout.is_empty());
-        let error = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            error.contains("--provider") && error.contains("ORT"),
-            "{error}"
-        );
-        assert!(!output.exists());
+    for backend in ["gl", "vk", "wgpu", "dx"] {
+        for provider in ["cpu", "cuda"] {
+            let result = run(
+                raw_command(&model, Path::new("-"), &output, 1).args([
+                    "--backend",
+                    backend,
+                    "--provider",
+                    provider,
+                ]),
+                vec![],
+                false,
+            );
+            assert_code(&result, 2);
+            assert!(result.stdout.is_empty());
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                error.contains("--provider") && error.contains("ORT"),
+                "{error}"
+            );
+            assert!(!output.exists());
+        }
     }
 }
 
-#[cfg(not(feature = "gl"))]
+#[cfg(not(all(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx")))]
 #[test]
-fn gl_without_feature_reports_backend_error_without_implicit_cpu_provider() {
+fn compute_without_feature_fails_without_an_implicit_cpu_provider() {
     let dir = tempfile::tempdir().unwrap();
     let model = model(dir.path());
     let output = dir.path().join("never-created.f32le");
     let before = directory_names(dir.path());
-    let result = run(
-        raw_command(&model, Path::new("-"), &output, 1).args(["--backend", "gl"]),
-        vec![],
-        false,
-    );
-    assert_code(&result, 1);
-    let error = String::from_utf8_lossy(&result.stderr);
-    assert!(error.contains("GL") && error.contains("未启用"), "{error}");
-    assert!(!error.contains("provider cpu"), "{error}");
-    assert_eq!(directory_names(dir.path()), before);
+    for backend in ["gl", "vk", "wgpu", "dx"]
+        .into_iter()
+        .filter(|name| !compute_backends().any(|compiled| compiled == *name))
+    {
+        let result = run(
+            raw_command(&model, Path::new("-"), &output, 1).args(["--backend", backend]),
+            vec![],
+            false,
+        );
+        assert_code(&result, 1);
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("未启用"), "{backend}: {error}");
+        assert!(!error.contains("provider cpu"), "{error}");
+        assert_eq!(directory_names(dir.path()), before);
+    }
 }
 
-#[cfg(feature = "gl")]
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
 #[test]
-fn gl_rejects_a_nonmatching_onnx_model_before_touching_output() {
+fn compute_rejects_a_nonmatching_model_before_touching_output() {
     let dir = tempfile::tempdir().unwrap();
     let model = model(dir.path());
     let output = dir.path().join("keep.f32le");
     std::fs::write(&output, b"existing output").unwrap();
     let before = directory_names(dir.path());
-    let result = run(
-        raw_command(&model, Path::new("-"), &output, 1)
-            .args(["--backend", "gl", "--overwrite"])
-            .env("ORT_DYLIB_PATH", dir.path().join("missing-ort-runtime")),
-        vec![],
-        false,
-    );
-    assert_code(&result, 1);
-    assert!(result.stdout.is_empty());
-    assert!(!result.stderr.is_empty());
-    assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
-    assert_eq!(directory_names(dir.path()), before);
+    for backend in compute_backends() {
+        let result = run(
+            raw_command(&model, Path::new("-"), &output, 1)
+                .args(["--backend", backend, "--overwrite"])
+                .env("ORT_DYLIB_PATH", dir.path().join("missing-ort-runtime")),
+            vec![],
+            false,
+        );
+        assert_code(&result, 1);
+        assert!(result.stdout.is_empty());
+        assert!(!result.stderr.is_empty());
+        assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
+        assert_eq!(directory_names(dir.path()), before);
+    }
 }
 
-#[cfg(feature = "gl")]
-fn gl_model() -> PathBuf {
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+fn compute_model() -> PathBuf {
     std::env::var_os("ANR_DFN3_MODEL")
         .map(PathBuf::from)
         .expect("set ANR_DFN3_MODEL to the supported original dfn3.onnx")
 }
 
-#[cfg(feature = "gl")]
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
 fn decode_raw(data: &[u8]) -> Vec<f32> {
     assert_eq!(data.len() % 4, 0);
     data.as_chunks::<4>()
@@ -1181,14 +1220,14 @@ fn decode_raw(data: &[u8]) -> Vec<f32> {
         .iter()
         .map(|sample| {
             let value = f32::from_le_bytes(*sample);
-            assert!(value.is_finite(), "GL produced a non-finite audio sample");
+            assert!(value.is_finite(), "GPU produced a non-finite audio sample");
             value
         })
         .collect()
 }
 
-#[cfg(feature = "gl")]
-fn gl_signal() -> Vec<f32> {
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
+fn compute_signal() -> Vec<f32> {
     (0..1927)
         .map(|index| {
             let t = index as f32 / 48_000.0;
@@ -1198,153 +1237,157 @@ fn gl_signal() -> Vec<f32> {
         .collect()
 }
 
-#[cfg(feature = "gl")]
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
 #[test]
-#[ignore = "requires ANR_DFN3_MODEL and a desktop OpenGL 4.3 compute driver"]
-fn gl_raw_stereo_and_wav_preserve_length_and_independent_channel_state() {
+#[ignore = "requires ANR_DFN3_MODEL and hardware for each compiled compute backend"]
+fn compute_raw_stereo_and_wav_preserve_length_and_independent_channel_state() {
     let dir = tempfile::tempdir().unwrap();
-    let model = gl_model();
-    let signal = gl_signal();
-    let mono = run(
-        raw_command(&model, Path::new("-"), Path::new("-"), 1)
-            .args(["--backend", "gl"])
-            .env("ORT_DYLIB_PATH", dir.path().join("missing-ort-runtime")),
-        bytes(&signal),
-        true,
-    );
-    assert_code(&mono, 0);
-    let mono_samples = decode_raw(&mono.stdout);
-    assert_eq!(mono_samples.len(), signal.len());
-    assert!(mono_samples.iter().any(|sample| sample.abs() > 1e-7));
-    let stereo: Vec<f32> = signal.iter().flat_map(|sample| [*sample, 0.0]).collect();
-    let stereo_result = run(
-        raw_command(&model, Path::new("-"), Path::new("-"), 2).args(["--backend", "gl"]),
-        bytes(&stereo),
-        true,
-    );
-    assert_code(&stereo_result, 0);
-    let stereo_samples = decode_raw(&stereo_result.stdout);
-    assert_eq!(stereo_samples.len(), signal.len() * 2);
-    for (index, frame) in stereo_samples.as_chunks::<2>().0.iter().enumerate() {
-        assert!((frame[0] - mono_samples[index]).abs() < 1e-6);
-        assert!(
-            frame[1].abs() < 1e-7,
-            "left state leaked into silent right channel"
+    let model = compute_model();
+    let signal = compute_signal();
+    for backend in compute_backends() {
+        let mono = run(
+            raw_command(&model, Path::new("-"), Path::new("-"), 1)
+                .args(["--backend", backend])
+                .env("ORT_DYLIB_PATH", dir.path().join("missing-ort-runtime")),
+            bytes(&signal),
+            true,
         );
-    }
-    let input = dir.path().join("stereo.wav");
-    let output = dir.path().join("clean.wav");
-    write_wav(&input, 48_000, 2, &stereo);
-    let wav = run(
-        command()
-            .arg("denoise")
-            .arg(&input)
-            .arg("--model")
-            .arg(&model)
-            .arg("--output")
-            .arg(&output)
-            .args([
-                "--backend",
-                "gl",
-                "--strength",
-                "100",
-                "--wav-format",
-                "float32",
-                "--verbose",
-            ]),
-        vec![],
-        false,
-    );
-    assert_code(&wav, 0);
-    let logs = String::from_utf8_lossy(&wav.stderr);
-    assert!(logs.contains("backend=gl"), "{logs}");
-    assert!(!logs.contains("provider="), "{logs}");
-    let (spec, wav_samples) = read_wav(&output);
-    assert_eq!(spec.sample_rate, 48_000);
-    assert_eq!(spec.channels, 2);
-    assert_eq!(wav_samples.len(), stereo_samples.len());
-    for (actual, expected) in wav_samples.iter().zip(&stereo_samples) {
-        assert!((actual - expected).abs() < 1e-6);
+        assert_code(&mono, 0);
+        let mono_samples = decode_raw(&mono.stdout);
+        assert_eq!(mono_samples.len(), signal.len());
+        assert!(mono_samples.iter().any(|sample| sample.abs() > 1e-7));
+        let stereo: Vec<f32> = signal.iter().flat_map(|sample| [*sample, 0.0]).collect();
+        let stereo_result = run(
+            raw_command(&model, Path::new("-"), Path::new("-"), 2).args(["--backend", backend]),
+            bytes(&stereo),
+            true,
+        );
+        assert_code(&stereo_result, 0);
+        let stereo_samples = decode_raw(&stereo_result.stdout);
+        assert_eq!(stereo_samples.len(), signal.len() * 2);
+        for (index, frame) in stereo_samples.as_chunks::<2>().0.iter().enumerate() {
+            assert!((frame[0] - mono_samples[index]).abs() < 1e-6, "{backend}");
+            assert!(
+                frame[1].abs() < 1e-7,
+                "{backend}: left state leaked into silent right channel"
+            );
+        }
+        let input = dir.path().join(format!("{backend}-stereo.wav"));
+        let output = dir.path().join(format!("{backend}-clean.wav"));
+        write_wav(&input, 48_000, 2, &stereo);
+        let wav = run(
+            command()
+                .arg("denoise")
+                .arg(&input)
+                .arg("--model")
+                .arg(&model)
+                .arg("--output")
+                .arg(&output)
+                .args([
+                    "--backend",
+                    backend,
+                    "--strength",
+                    "100",
+                    "--wav-format",
+                    "float32",
+                    "--verbose",
+                ]),
+            vec![],
+            false,
+        );
+        assert_code(&wav, 0);
+        let logs = String::from_utf8_lossy(&wav.stderr);
+        assert!(logs.contains(&format!("backend={backend}")), "{logs}");
+        assert!(!logs.contains("provider="), "{logs}");
+        let (spec, wav_samples) = read_wav(&output);
+        assert_eq!(spec.sample_rate, 48_000);
+        assert_eq!(spec.channels, 2);
+        assert_eq!(wav_samples.len(), stereo_samples.len());
+        for (actual, expected) in wav_samples.iter().zip(&stereo_samples) {
+            assert!((actual - expected).abs() < 1e-6, "{backend}");
+        }
     }
 }
 
-#[cfg(feature = "gl")]
+#[cfg(any(feature = "gl", feature = "vk", feature = "wgpu", feature = "dx"))]
 #[test]
-#[ignore = "requires ANR_DFN3_MODEL and a desktop OpenGL 4.3 compute driver"]
-fn gl_batch_resets_state_and_strength_changes_real_audio() {
+#[ignore = "requires ANR_DFN3_MODEL and hardware for each compiled compute backend"]
+fn compute_batch_resets_state_and_strength_changes_real_audio() {
     let dir = tempfile::tempdir().unwrap();
-    let model = gl_model();
-    let signal = gl_signal();
+    let model = compute_model();
+    let signal = compute_signal();
     let first = dir.path().join("first.f32le");
     let second = dir.path().join("second.f32le");
-    let output_dir = dir.path().join("batch");
     std::fs::write(&first, bytes(&signal)).unwrap();
     std::fs::write(&second, bytes(&signal)).unwrap();
-    let batch = run(
-        command()
-            .arg("denoise")
-            .arg(&first)
-            .arg(&second)
-            .arg("--model")
-            .arg(&model)
-            .arg("--output-dir")
-            .arg(&output_dir)
-            .args([
-                "--backend",
-                "gl",
-                "--input-format",
-                "f32le",
-                "--input-rate",
-                "48000",
-                "--input-channels",
-                "1",
-                "--output-format",
-                "f32le",
-                "--strength",
-                "100",
-            ]),
-        vec![],
-        false,
-    );
-    assert_code(&batch, 0);
-    let first_output = std::fs::read(output_dir.join("first.f32le")).unwrap();
-    let second_output = std::fs::read(output_dir.join("second.f32le")).unwrap();
-    assert_bytes(&first_output, &second_output);
-    let processed = decode_raw(&first_output);
-    assert_eq!(processed.len(), signal.len());
-    let low_strength = run(
-        command()
-            .arg("denoise")
-            .arg(&first)
-            .arg("--model")
-            .arg(&model)
-            .args([
-                "--backend",
-                "gl",
-                "--input-format",
-                "f32le",
-                "--input-rate",
-                "48000",
-                "--input-channels",
-                "1",
-                "--output",
-                "-",
-                "--output-format",
-                "f32le",
-                "--strength",
-                "0",
-            ]),
-        vec![],
-        false,
-    );
-    assert_code(&low_strength, 0);
-    let low_samples = decode_raw(&low_strength.stdout);
-    assert_eq!(low_samples.len(), signal.len());
-    assert!(
-        processed
-            .iter()
-            .zip(&low_samples)
-            .any(|(high, low)| (high - low).abs() > 1e-7),
-        "strength was ignored by the GL pipeline"
-    );
+    for backend in compute_backends() {
+        let output_dir = dir.path().join(backend);
+        let batch = run(
+            command()
+                .arg("denoise")
+                .arg(&first)
+                .arg(&second)
+                .arg("--model")
+                .arg(&model)
+                .arg("--output-dir")
+                .arg(&output_dir)
+                .args([
+                    "--backend",
+                    backend,
+                    "--input-format",
+                    "f32le",
+                    "--input-rate",
+                    "48000",
+                    "--input-channels",
+                    "1",
+                    "--output-format",
+                    "f32le",
+                    "--strength",
+                    "100",
+                ]),
+            vec![],
+            false,
+        );
+        assert_code(&batch, 0);
+        let first_output = std::fs::read(output_dir.join("first.f32le")).unwrap();
+        let second_output = std::fs::read(output_dir.join("second.f32le")).unwrap();
+        assert_bytes(&first_output, &second_output);
+        let processed = decode_raw(&first_output);
+        assert_eq!(processed.len(), signal.len());
+        let low_strength = run(
+            command()
+                .arg("denoise")
+                .arg(&first)
+                .arg("--model")
+                .arg(&model)
+                .args([
+                    "--backend",
+                    backend,
+                    "--input-format",
+                    "f32le",
+                    "--input-rate",
+                    "48000",
+                    "--input-channels",
+                    "1",
+                    "--output",
+                    "-",
+                    "--output-format",
+                    "f32le",
+                    "--strength",
+                    "0",
+                ]),
+            vec![],
+            false,
+        );
+        assert_code(&low_strength, 0);
+        let low_samples = decode_raw(&low_strength.stdout);
+        assert_eq!(low_samples.len(), signal.len());
+        assert!(
+            processed
+                .iter()
+                .zip(&low_samples)
+                .any(|(high, low)| (high - low).abs() > 1e-7),
+            "{backend}: strength was ignored"
+        );
+    }
 }

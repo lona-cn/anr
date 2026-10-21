@@ -2,8 +2,8 @@
 //! every frame replays fixed dispatch records without allocating or reading back.
 use anr_core::Result;
 
-use crate::gpu::Kernel;
-use crate::model::{Arena, Weights};
+use crate::weights::{Arena, Weights};
+use crate::{Dispatch, ShaderKind};
 
 const NONE: u32 = u32::MAX;
 const LINEAR: u32 = 0;
@@ -18,9 +18,8 @@ pub(crate) struct Network {
     pub(crate) df_stem: u32,
     pub(crate) gains: u32,
     pub(crate) coefs: u32,
-    kernel: Kernel,
-    encoder: Vec<Dispatch>,
-    decoder: Vec<Dispatch>,
+    pub(crate) encoder: Vec<Dispatch>,
+    pub(crate) decoder: Vec<Dispatch>,
 }
 
 #[derive(Clone, Copy)]
@@ -35,11 +34,6 @@ impl Tensor {
     fn len(self) -> u32 {
         self.channels * self.height * self.width
     }
-}
-
-struct Dispatch {
-    params: [u32; 32],
-    groups: u32,
 }
 
 struct Plan<'a> {
@@ -70,6 +64,7 @@ impl Plan<'_> {
 
     fn emit(&mut self, params: [u32; 32]) {
         self.ops.push(Dispatch {
+            shader: ShaderKind::Network,
             groups: params[1].div_ceil(64),
             params,
         });
@@ -297,11 +292,7 @@ impl Plan<'_> {
 }
 
 impl Network {
-    pub(crate) unsafe fn new(
-        gl: &glow::Context,
-        weights: &mut Weights,
-        arena: &mut Arena,
-    ) -> Result<Self> {
+    pub(crate) fn build(weights: &mut Weights, arena: &mut Arena) -> Result<Self> {
         let mut plan = Plan {
             weights,
             arena,
@@ -451,8 +442,6 @@ impl Network {
         plan.emit(p);
         let decoder = plan.ops;
 
-        // Compile last so a missing/incorrect initializer cannot leak a GL program.
-        let kernel = unsafe { Kernel::new(gl, include_str!("shaders/network.comp"))? };
         Ok(Self {
             erb_input: erb_input.offset,
             df_input: df_input.offset,
@@ -460,25 +449,8 @@ impl Network {
             df_stem: df_stem.offset,
             gains: gains.offset,
             coefs: coefs.offset,
-            kernel,
             encoder,
             decoder,
         })
-    }
-
-    pub(crate) unsafe fn encode(&self, gl: &glow::Context) {
-        for op in &self.encoder {
-            unsafe { self.kernel.dispatch(gl, &op.params, op.groups) };
-        }
-    }
-
-    pub(crate) unsafe fn decode(&self, gl: &glow::Context) {
-        for op in &self.decoder {
-            unsafe { self.kernel.dispatch(gl, &op.params, op.groups) };
-        }
-    }
-
-    pub(crate) unsafe fn destroy(&self, gl: &glow::Context) {
-        unsafe { self.kernel.destroy(gl) };
     }
 }

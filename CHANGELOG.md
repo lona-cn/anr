@@ -2,10 +2,11 @@
 
 ## 未发布
 
-- 新增 `anr-gl`：固定 DFN3 模型的原生 OpenGL 4.3 Compute 后端，不依赖 ONNX Runtime；原 ONNX 仅作为按 SHA-256 校验的参数容器。
-- FFT、特征归一化、卷积、分组线性、五个 GRU、频谱滤波和 overlap-add 均在 GPU 执行；采用 960 点混合基 FFT、GPU 常驻权重和双状态缓冲、每实例独立的 context 工作线程。
-- facade 增加可选 `gl` feature 和 `anr::gl::DFN3`；CLI 的 `--backend ort|gl` 实际接入 engine 工厂，`--provider` 仅适用于 ORT。默认构建和 Release ZIP 仍使用 ORT。
-- 保留原有分帧、补零、强度、重置和声道独立处理；覆盖独立 ONNX 数值基准、跨线程使用、强度切换、尾帧、无效输入、真实 raw/WAV/批处理。原生 Windows / RTX 2080 Ti 已实跑；WSL Ubuntu 24.04 的 GL-only 编译、非 GPU 测试和 Clippy 通过，Linux EGL GPU 路径尚未实跑，macOS 明确不支持。
+- 新增固定 DFN3 模型的原生 `anr-gl`、`anr-vk`、`anr-dx` 与独立 `anr-wgpu` 后端，均不依赖 ONNX Runtime；原 ONNX 仅作为按 SHA-256 校验的参数容器。DX 为原生 D3D12，不是 DirectML；VK/DX 不经 wgpu。
+- 新增 `anr-dfn3` 共用权重布局、固定执行顺序、工作线程和 WGSL 算子，通过 Naga 生成 GLSL、SPIR-V、HLSL；FFT、特征归一化、卷积、分组线性、五个 GRU、频谱滤波和 overlap-add 全在 GPU 执行，保留 960 点混合基 FFT、常驻权重与双状态缓冲。
+- facade 增加 `gl`、`vk`、`wgpu`、`dx` features 和对应模块的 `DFN3`；CLI 接入 `--backend ort|gl|vk|wgpu|dx`，`--provider` 仅适用于 ORT。默认构建和 Release ZIP 仍使用 ORT。
+- 四种后端在原生 Windows / RTX 2080 Ti 上通过独立 ONNX 连续帧数值基准、跨线程使用、强度切换、尾帧、无效输入、reset，以及真实 raw/WAV、独立立体声与批处理验收。WSL Ubuntu 24.04 通过 Compute-only 编译和 44 项非 GPU 测试，6 项硬件测试保留 ignored；Linux GPU 路径和 macOS 未验证。
+- CI 分开运行普通工作区测试和 ORT 的真实模型测试，新增 Compute-only CLI 非 GPU 验收；不再在无 GPU runner 上强行运行标为 ignored 的硬件测试。
 
 ## 0.1.0
 

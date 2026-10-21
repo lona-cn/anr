@@ -1,0 +1,22 @@
+[package]
+name = "anr-dfn3"
+description = "Fixed DeepFilterNet3 model, GPU dispatch plan and stream state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+repository = "https://github.com/lona-cn/anr"
+include = ["src/**", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+bytemuck = "1.24"
+prost = "0.14"
+sha2 = "0.10"
+naga = { version = "30.0.1", default-features = false, features = ["wgsl-in"], optional = true }
+
+[features]
+default = []
+glsl = ["dep:naga", "naga/glsl-out"]
+spirv = ["dep:naga", "naga/spv-out"]
+hlsl = ["dep:naga", "naga/hlsl-out"]

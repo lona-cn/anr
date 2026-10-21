@@ -5,14 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 readme = "../../README.md"
-include = ["src/**", "tests/**", "LICENSE-MIT", "LICENSE-APACHE"]
+include = ["src/**", "tests/dfn3.rs", "tests/fixtures/reference_*.f32le", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
 anr-core.workspace = true
+anr-dfn3 = { workspace = true, features = ["glsl"] }
 bytemuck = "1.24"
 glow = "0.16"
-prost = "0.14"
-sha2 = "0.10"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "wgl"] }

@@ -35,11 +35,11 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 
 以上不省略传递依赖义务；以实际解析版本的 package 源码及许可为准。尤其 MIT 的版权和许可文本、Apache-2.0 的许可及适用 NOTICE 不可用项目自身的版权通知替换。
 
-## 可选 OpenGL Compute 后端
+## 可选 Compute 后端
 
-仅使用 `gl` 的构建不链接 Rust ORT 或 ONNX Runtime。它通过 [glow](https://github.com/grovesNL/glow) 调用驱动提供的 OpenGL，通过 [glutin](https://github.com/rust-windowing/glutin) 和 raw-window-handle 管理原生上下文；Windows 另使用 windows-sys。GL 驱动由系统提供，不随 crate 安装或打包。
+只启用 `gl`、`vk`、`wgpu`、`dx` 的构建不链接 Rust ORT 或 ONNX Runtime。`gl` 通过 [glow](https://github.com/grovesNL/glow) 调用系统驱动，并通过 [glutin](https://github.com/rust-windowing/glutin) 和 raw-window-handle 管理上下文；`vk` 通过 [ash](https://github.com/ash-rs/ash) 调用系统 Vulkan loader；`wgpu` 使用 [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu) 的原生硬件后端；`dx` 通过 [windows-rs](https://github.com/microsoft/windows-rs) 调用系统 D3D12、DXGI 和 D3DCompiler 47，不是 DirectML。驱动与系统库不随 crate 安装或打包，分发者应另行核对运行环境要求。
 
-参数容器解码使用 [prost](https://github.com/tokio-rs/prost)，模型摘要使用 [sha2](https://github.com/RustCrypto/hashes)，缓冲区字节视图使用 [bytemuck](https://github.com/Lokathor/bytemuck)。这些包及其传递依赖保留各自的许可和版权通知；GL-only 分发仍需按实际 Cargo.lock 收集对应文本，不能用项目自身许可代替。模型权重的授权与代码依赖分别处理。
+共用 WGSL 算子通过 [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) 翻译为 GLSL、SPIR-V 或 HLSL。参数解码使用 [prost](https://github.com/tokio-rs/prost)，摘要使用 [sha2](https://github.com/RustCrypto/hashes)，字节视图使用 [bytemuck](https://github.com/Lokathor/bytemuck)。各包及传递依赖保留自己的许可和版权通知；无 ORT 分发仍应按实际 Cargo.lock 收集对应文本，不能用项目许可代替。模型权重的授权与代码依赖分别处理。
 
 ## Rust ORT 绑定与 ONNX Runtime 是两个组件
 

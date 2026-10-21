@@ -1,4 +1,4 @@
-"""Regenerate the GL regression audio using ONNX's NumPy reference evaluator.
+"""Regenerate all four compute backends' audio using ONNX's NumPy reference evaluator.
 
 Development-only dependencies: onnx==1.19.1 numpy==2.2.6. No ONNX Runtime.
 Run from the workspace root: python tools/generate_gl_reference.py
@@ -68,11 +68,12 @@ def main() -> None:
         if not np.isfinite(enhanced).all() or not np.isfinite(state).all():
             raise ValueError(f"non-finite reference at frame {index}")
         output.append(enhanced[:len(chunk)])
-    directory = ROOT / "crates/anr-gl/tests/fixtures"
-    directory.mkdir(parents=True, exist_ok=True)
-    audio.astype("<f4").tofile(directory / "reference_input.f32le")
     expected = np.concatenate(output).astype("<f4")
-    expected.tofile(directory / "reference_output.f32le")
+    for backend in ("gl", "vk", "wgpu", "dx"):
+        directory = ROOT / f"crates/anr-{backend}/tests/fixtures"
+        directory.mkdir(parents=True, exist_ok=True)
+        audio.astype("<f4").tofile(directory / "reference_input.f32le")
+        expected.tofile(directory / "reference_output.f32le")
     print(f"Generated {len(audio)} samples / {len(output)} stateful frames; output peak {np.max(np.abs(expected)):.9g}")
 
 

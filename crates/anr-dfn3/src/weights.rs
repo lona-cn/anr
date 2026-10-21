@@ -43,7 +43,7 @@ impl Weights {
         let bytes = std::fs::read(path).map_err(Error::backend)?;
         if Sha256::digest(&bytes)[..] != MODEL_SHA {
             return Err(Error::InvalidModel(
-                "OpenGL 后端只支持 SHA-256 fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9 对应的 DFN3 模型".into(),
+                "GPU 后端只支持 SHA-256 fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9 对应的 DFN3 模型".into(),
             ));
         }
         let decoded =

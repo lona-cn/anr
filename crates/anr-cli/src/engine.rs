@@ -1,6 +1,12 @@
 use crate::args::{Backend, Provider};
 use anr::NoiseReduction;
-#[cfg(any(feature = "ort", feature = "gl"))]
+#[cfg(any(
+    feature = "ort",
+    feature = "gl",
+    feature = "vk",
+    feature = "wgpu",
+    feature = "dx"
+))]
 use anyhow::Context;
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -28,10 +34,19 @@ enum BackendResources {
     },
     #[cfg(feature = "gl")]
     Gl,
+    #[cfg(feature = "vk")]
+    Vk,
+    #[cfg(feature = "wgpu")]
+    Wgpu,
+    #[cfg(feature = "dx")]
+    Dx,
 }
 
 impl BackendResources {
     fn new(backend: Backend, provider: Option<Provider>) -> Result<(Self, EngineSpec)> {
+        if backend != Backend::Ort && provider.is_some() {
+            bail!("--provider 只适用于 ORT 后端");
+        }
         match backend {
             Backend::Ort => {
                 let provider = provider.unwrap_or(Provider::Cpu);
@@ -62,9 +77,6 @@ impl BackendResources {
                 bail!("此程序未启用 ORT 后端；请以 ort feature 重新构建")
             }
             Backend::Gl => {
-                if provider.is_some() {
-                    bail!("--provider 只适用于 ORT，不能与 --backend gl 同用");
-                }
                 #[cfg(feature = "gl")]
                 {
                     Ok((
@@ -78,11 +90,59 @@ impl BackendResources {
                 #[cfg(not(feature = "gl"))]
                 bail!("此程序未启用 GL 后端；请以 gl feature 重新构建")
             }
+            Backend::Vk => {
+                #[cfg(feature = "vk")]
+                {
+                    Ok((
+                        Self::Vk,
+                        EngineSpec {
+                            sample_rate: anr::vk::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::vk::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "vk"))]
+                bail!("此程序未启用 Vulkan 后端；请以 vk feature 重新构建")
+            }
+            Backend::Wgpu => {
+                #[cfg(feature = "wgpu")]
+                {
+                    Ok((
+                        Self::Wgpu,
+                        EngineSpec {
+                            sample_rate: anr::wgpu::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::wgpu::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "wgpu"))]
+                bail!("此程序未启用 wgpu 后端；请以 wgpu feature 重新构建")
+            }
+            Backend::Dx => {
+                #[cfg(feature = "dx")]
+                {
+                    Ok((
+                        Self::Dx,
+                        EngineSpec {
+                            sample_rate: anr::dx::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::dx::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "dx"))]
+                bail!("此程序未启用 D3D12 后端；请以 dx feature 重新构建")
+            }
         }
     }
 
     fn load(&self, model: &Path, strength: f32) -> Result<Box<dyn NoiseReduction>> {
-        #[cfg(any(feature = "ort", feature = "gl"))]
+        #[cfg(any(
+            feature = "ort",
+            feature = "gl",
+            feature = "vk",
+            feature = "wgpu",
+            feature = "dx"
+        ))]
         match self {
             #[cfg(feature = "ort")]
             Self::Ort {
@@ -96,8 +156,35 @@ impl BackendResources {
                 reducer.set_factor(strength);
                 Ok(Box::new(reducer))
             }
+            #[cfg(feature = "vk")]
+            Self::Vk => {
+                let mut reducer = anr::vk::DFN3::from_file(model)
+                    .with_context(|| format!("无法以 Vulkan 后端加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu => {
+                let mut reducer = anr::wgpu::DFN3::from_file(model)
+                    .with_context(|| format!("无法以 wgpu 后端加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "dx")]
+            Self::Dx => {
+                let mut reducer = anr::dx::DFN3::from_file(model)
+                    .with_context(|| format!("无法以 D3D12 后端加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
         }
-        #[cfg(not(any(feature = "ort", feature = "gl")))]
+        #[cfg(not(any(
+            feature = "ort",
+            feature = "gl",
+            feature = "vk",
+            feature = "wgpu",
+            feature = "dx"
+        )))]
         {
             let _ = (model, strength);
             match *self {}
@@ -242,6 +329,24 @@ pub fn backends() -> Vec<BackendInfo> {
         BackendInfo {
             name: "gl",
             compiled: cfg!(feature = "gl"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "vk",
+            compiled: cfg!(feature = "vk"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "wgpu",
+            compiled: cfg!(feature = "wgpu"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "dx",
+            compiled: cfg!(feature = "dx"),
             runtime_available: None,
             providers: Vec::new(),
         },

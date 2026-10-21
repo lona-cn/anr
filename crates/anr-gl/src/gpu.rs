@@ -1,17 +1,14 @@
 use crate::context::GlContext;
-use crate::dsp::Dsp;
-use crate::model::{Arena, Weights};
-use crate::network::Network;
 use crate::{FRAME_SIZE, STATE_SIZE, backend};
 use anr_core::Result;
+use anr_dfn3::{Executor, Model, PARAMETER_BYTES, ShaderKind};
 use glow::HasContext;
 
-pub(crate) struct Kernel {
+struct Kernel {
     program: glow::NativeProgram,
-    params: glow::NativeUniformLocation,
 }
 impl Kernel {
-    pub(crate) unsafe fn new(gl: &glow::Context, source: &str) -> Result<Self> {
+    unsafe fn new(gl: &glow::Context, source: &str) -> Result<Self> {
         unsafe {
             let shader = gl.create_shader(glow::COMPUTE_SHADER).map_err(backend)?;
             gl.shader_source(shader, source);
@@ -37,62 +34,44 @@ impl Kernel {
                 gl.delete_program(program);
                 return Err(backend(format!("无法链接 Compute Shader：{log}")));
             }
-            let Some(params) = gl.get_uniform_location(program, "p[0]") else {
-                gl.delete_program(program);
-                return Err(backend("Compute Shader 缺少参数"));
-            };
-            Ok(Self { program, params })
+            Ok(Self { program })
         }
-    }
-    pub(crate) unsafe fn dispatch(&self, gl: &glow::Context, params: &[u32], groups: u32) {
-        unsafe {
-            gl.use_program(Some(self.program));
-            gl.uniform_1_u32_slice(Some(&self.params), params);
-            gl.dispatch_compute(groups, 1, 1);
-            gl.memory_barrier(glow::SHADER_STORAGE_BARRIER_BIT);
-        }
-    }
-    pub(crate) unsafe fn destroy(&self, gl: &glow::Context) {
-        unsafe { gl.delete_program(self.program) };
     }
 }
 
-// All fields and native objects live exclusively on the worker thread.
-// Drop explicitly destroys GPU objects while the native context is current.
 pub(crate) struct Gpu {
     context: GlContext,
-    network: Network,
-    dsp: Dsp,
-    buffers: [glow::NativeBuffer; 4],
+    programs: [Kernel; 3],
+    buffers: [glow::NativeBuffer; 5],
+    model: Model,
+    stride: u32,
     current: usize,
-    input: u32,
-    output: u32,
     zeros: Vec<f32>,
 }
-impl Gpu {
-    pub(crate) fn new(mut weights: Weights) -> Result<Self> {
+impl Executor for Gpu {
+    fn new(mut model: Model) -> Result<Self> {
         let context = GlContext::new()?;
         let gl = &context.gl;
-        let mut arena = Arena::default();
-        let input = arena.alloc(FRAME_SIZE as u32);
-        let output = arena.alloc(FRAME_SIZE as u32);
-        let network = unsafe { Network::new(gl, &mut weights, &mut arena)? };
-        let dsp = match unsafe { Dsp::new(gl, &mut weights, &mut arena, &network, input, output) } {
-            Ok(dsp) => dsp,
-            Err(error) => {
-                unsafe { network.destroy(gl) };
-                return Err(error);
-            }
-        };
+        let alignment = unsafe { gl.get_parameter_i32(glow::UNIFORM_BUFFER_OFFSET_ALIGNMENT) };
+        if alignment <= 0 {
+            return Err(backend("驱动返回了无效的 uniform buffer 对齐值"));
+        }
+        let stride = PARAMETER_BYTES.div_ceil(alignment as u32) * alignment as u32;
+        let parameters = model.parameter_bytes(stride);
         let zeros = vec![0.0_f32; STATE_SIZE];
-        let mut buffers = Vec::with_capacity(4);
+        let mut programs = Vec::with_capacity(3);
+        let mut buffers = Vec::with_capacity(5);
         let setup = (|| -> Result<()> {
             unsafe {
+                for kind in ShaderKind::ALL {
+                    let source = anr_dfn3::shaders::glsl(kind)?;
+                    programs.push(Kernel::new(gl, &source)?);
+                }
                 let limit = gl.get_parameter_i64(glow::MAX_SHADER_STORAGE_BLOCK_SIZE);
                 for size in [
-                    weights.data.len() * 4,
+                    model.weights.len() * 4,
                     STATE_SIZE * 4,
-                    arena.len as usize * 4,
+                    model.scratch_len as usize * 4,
                 ] {
                     if size as i64 > limit || size > i32::MAX as usize {
                         return Err(backend(format!(
@@ -100,26 +79,32 @@ impl Gpu {
                         )));
                     }
                 }
-                for slot in 0..4 {
+                for slot in 0..5 {
                     let buffer = gl.create_buffer().map_err(backend)?;
                     buffers.push(buffer);
-                    gl.bind_buffer(glow::SHADER_STORAGE_BUFFER, Some(buffer));
+                    let target = if slot == 4 {
+                        glow::UNIFORM_BUFFER
+                    } else {
+                        glow::SHADER_STORAGE_BUFFER
+                    };
+                    gl.bind_buffer(target, Some(buffer));
                     match slot {
                         0 => gl.buffer_data_u8_slice(
-                            glow::SHADER_STORAGE_BUFFER,
-                            bytemuck::cast_slice(&weights.data),
+                            target,
+                            bytemuck::cast_slice(&model.weights),
                             glow::STATIC_DRAW,
                         ),
                         1 | 2 => gl.buffer_data_u8_slice(
-                            glow::SHADER_STORAGE_BUFFER,
+                            target,
                             bytemuck::cast_slice(&zeros),
                             glow::DYNAMIC_COPY,
                         ),
-                        _ => gl.buffer_data_size(
-                            glow::SHADER_STORAGE_BUFFER,
-                            (arena.len * 4) as i32,
+                        3 => gl.buffer_data_size(
+                            target,
+                            (model.scratch_len * 4) as i32,
                             glow::DYNAMIC_COPY,
                         ),
+                        _ => gl.buffer_data_u8_slice(target, &parameters, glow::DYNAMIC_DRAW),
                     }
                 }
                 let error = gl.get_error();
@@ -136,24 +121,27 @@ impl Gpu {
                 for buffer in buffers {
                     gl.delete_buffer(buffer);
                 }
-                dsp.destroy(gl);
-                network.destroy(gl);
+                for kernel in programs {
+                    gl.delete_program(kernel.program);
+                }
             }
             return Err(error);
         }
+        model.weights = Vec::new();
+        let programs = programs
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("three fixed programs"));
         Ok(Self {
             context,
-            network,
-            dsp,
+            programs,
             buffers: buffers.try_into().unwrap(),
+            model,
+            stride,
             current: 0,
-            input,
-            output,
             zeros,
         })
     }
-
-    pub(crate) fn frame(
+    fn frame(
         &mut self,
         input: &[f32; FRAME_SIZE],
         output: &mut [f32; FRAME_SIZE],
@@ -173,6 +161,16 @@ impl Gpu {
                 }
                 self.current = 0;
             }
+            if self.model.update_attenuation(attenuation) {
+                let step = self.model.attenuation_dispatch;
+                let offset = step as u32 * self.stride + 22 * 4;
+                gl.bind_buffer(glow::UNIFORM_BUFFER, Some(self.buffers[4]));
+                gl.buffer_sub_data_u8_slice(
+                    glow::UNIFORM_BUFFER,
+                    offset as i32,
+                    bytemuck::cast_slice(&self.model.dispatches[step].params[22..24]),
+                );
+            }
             gl.bind_buffer_base(glow::SHADER_STORAGE_BUFFER, 0, Some(self.buffers[0]));
             gl.bind_buffer_base(
                 glow::SHADER_STORAGE_BUFFER,
@@ -188,14 +186,21 @@ impl Gpu {
             gl.bind_buffer(glow::SHADER_STORAGE_BUFFER, Some(self.buffers[3]));
             gl.buffer_sub_data_u8_slice(
                 glow::SHADER_STORAGE_BUFFER,
-                (self.input * 4) as i32,
+                (self.model.input * 4) as i32,
                 bytemuck::cast_slice(input),
             );
-            self.dsp.prepare(gl);
-            self.network.encode(gl);
-            self.dsp.history(gl);
-            self.network.decode(gl);
-            self.dsp.finish(gl, attenuation);
+            for (index, dispatch) in self.model.dispatches.iter().enumerate() {
+                gl.use_program(Some(self.programs[dispatch.shader.index()].program));
+                gl.bind_buffer_range(
+                    glow::UNIFORM_BUFFER,
+                    4,
+                    Some(self.buffers[4]),
+                    (index as u32 * self.stride) as i32,
+                    PARAMETER_BYTES as i32,
+                );
+                gl.dispatch_compute(dispatch.groups, 1, 1);
+                gl.memory_barrier(glow::SHADER_STORAGE_BARRIER_BIT);
+            }
             gl.memory_barrier(glow::BUFFER_UPDATE_BARRIER_BIT | glow::SHADER_STORAGE_BARRIER_BIT);
             let fence = gl
                 .fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0)
@@ -215,7 +220,7 @@ impl Gpu {
             gl.delete_sync(fence);
             gl.get_buffer_sub_data(
                 glow::SHADER_STORAGE_BUFFER,
-                (self.output * 4) as i32,
+                (self.model.output * 4) as i32,
                 bytemuck::cast_slice_mut(output),
             );
             let error = gl.get_error();
@@ -233,8 +238,9 @@ impl Drop for Gpu {
     fn drop(&mut self) {
         unsafe {
             let gl = &self.context.gl;
-            self.network.destroy(gl);
-            self.dsp.destroy(gl);
+            for kernel in &self.programs {
+                gl.delete_program(kernel.program);
+            }
             for buffer in self.buffers {
                 gl.delete_buffer(buffer);
             }

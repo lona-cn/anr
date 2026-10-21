@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/anr-core", "crates/anr-ort", "crates/anr-gl", "crates/anr", "crates/anr-cli"]
+members = ["crates/anr-core", "crates/anr-ort", "crates/anr-dfn3", "crates/anr-gl", "crates/anr-vk", "crates/anr-wgpu", "crates/anr-dx", "crates/anr", "crates/anr-cli"]
 exclude = ["vox-noise-reduction"]
 
 [workspace.package]
@@ -11,6 +11,10 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 anr-core = { version = "0.1.0", path = "crates/anr-core" }
 anr-ort = { version = "0.1.0", path = "crates/anr-ort", default-features = false }
+anr-dfn3 = { version = "0.1.0", path = "crates/anr-dfn3" }
 anr-gl = { version = "0.1.0", path = "crates/anr-gl" }
+anr-vk = { version = "0.1.0", path = "crates/anr-vk" }
+anr-wgpu = { version = "0.1.0", path = "crates/anr-wgpu" }
+anr-dx = { version = "0.1.0", path = "crates/anr-dx" }
 anr = { version = "0.1.0", path = "crates/anr", default-features = false }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-27"] }
