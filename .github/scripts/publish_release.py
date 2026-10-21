@@ -147,10 +147,8 @@ class GitHub:
             raise PublicationError("GitHub returned an unexpected JSON response")
         return document
 
-    def resolve(self, ref: str, *, allow_missing: bool = False) -> str | None:
-        result = self.api(f"{self.base}/commits/{quote(ref, safe='')}", allow_missing=allow_missing)
-        if result is None:
-            return None
+    def resolve(self, ref: str) -> str:
+        result = self.api(f"{self.base}/commits/{quote(ref, safe='')}")
         sha = result.get("sha")
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
             raise PublicationError("GitHub returned an invalid commit SHA")
@@ -187,11 +185,12 @@ class GitHub:
 
 
 def verify_tag(github: GitHub, args: argparse.Namespace, *, must_exist: bool = False) -> None:
-    resolved = github.resolve(args.tag, allow_missing=True)
-    if resolved is None:
+    # The commits endpoint returns 422 for an absent ref; exact Git refs return 404.
+    reference = github.api(f"{github.base}/git/ref/tags/{quote(args.tag, safe='')}", allow_missing=True)
+    if reference is None:
         if must_exist or args.tag.startswith("v"):
             raise PublicationError("required existing version/release tag was not found")
-    elif resolved != args.commit:
+    elif github.resolve(f"refs/tags/{args.tag}") != args.commit:
         raise PublicationError("existing tag resolves to another commit; refusing to move or reuse it")
 
 

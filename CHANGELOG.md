@@ -28,5 +28,6 @@
 - main/master push 在四平台全通过后生成不可变提交预发布；`v<工作区版本>` tag 发布对应版本，拒绝版本错配；PR 和手动 CI 不发布，不涉及 crates.io。
 - GitHub 应用 ZIP 包含 CLI、CPU ONNX Runtime 1.28.0、DFN3 模型及项目/模型/原生库许可；使用 `ort-load-dynamic`，不要求用户自行配置运行库搜索路径，`--model` 仍明确必填。
 - 发布先上传到 draft，全部 ZIP 和 SHA256SUMS 核对完成后才公开；不移动 tag，不覆盖已公开版本或同名异摘要资产。使用内置 `GITHUB_TOKEN`，仅发布 job 授予 Contents 写入，无需专用 Secret；历史 workflow 提交若触发额外授权限制，明确失败而不替换目标提交。
+- 发布前通过精确 Git ref 判断 tag 是否存在，避免首次预发布被不存在 ref 的 `422` 响应阻断；已有 lightweight/annotated tag 按完整 `refs/tags/…` 解析并校验提交。
 
 Rust 包仍不打包或自动下载模型，工作区仍可使用 `models/dfn3.onnx`。GitHub 模型资产与应用 ZIP 的模型分发是单独的明确授权范围，不代表任意来源模型的音质、性能或许可保证。
