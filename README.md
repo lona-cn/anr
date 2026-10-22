@@ -106,7 +106,7 @@ The library does not compensate for model latency and has no end-of-stream flush
 
 #### Adjust the strength
 
-Every DFN3 backend supports `NoiseReduction::set_factor(0..=100)`, mapped to dB with `round(factor / 100 * 60)`. Only the ORT concrete type additionally exposes `set_atten_lim_db` / `get_atten_lim_db` for direct `0..=60` dB access; these methods are not on the shared trait or compute frontends.
+Every native DFN3 backend supports `NoiseReduction::set_factor(0..=100)`, mapped to dB with `round(factor / 100 * 60)`. Only the ORT concrete type additionally exposes `set_atten_lim_db` / `get_atten_lim_db` for direct `0..=60` dB access; these methods are not on the shared trait or compute frontends.
 
 Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive and negative infinity use the upper and lower bounds respectively.
 
@@ -149,7 +149,7 @@ Adding `anr` alone does not enable model execution. Choose the Cargo features yo
 | `gl` | Provides `anr::gl::DFN3`, using native OpenGL 4.3 compute shaders without ORT. |
 | `gles` | Provides `anr::gles::DFN3`, using a real native OpenGL ES 3.1+ compute context without ORT. |
 | `vk` | Provides `anr::vk::DFN3`, using native Vulkan 1.1 compute without ORT or wgpu. |
-| `wgpu` | Provides `anr::wgpu::DFN3`, using wgpu hardware adapters without ORT. |
+| `wgpu` | Native `anr::wgpu::DFN3`, or asynchronous browser `anr::wgpu::web::DFN3` on `wasm32-unknown-unknown`, without ORT. |
 | `dx` | Provides `anr::dx::DFN3`, using native Windows Direct3D 12 compute, not DirectML or wgpu. |
 | `cuda` | Provides `anr::cuda::DFN3`, using CUDA Driver/NVRTC and replay graphs for complete FP32 inference, without ORT. |
 | `tensorrt` | Provides `anr::tensorrt::DFN3`, using native TensorRT engines plus CUDA DSP/FFT; requires TensorRT/CUDA SDKs at build time. |
@@ -169,6 +169,60 @@ The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default
 Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, configure a `SessionBuilder`, call `anr::ort::session_from_file(builder, path, &providers)`, then pass the session to `DFN3::new(session)`.
 
 The project's default ORT policy allows per-operator CPU execution alongside a GPU provider. CLI and benchmark keep ORT's normal placement rules for unsupported or CPU-preferred operators; this is not a temporary benchmark option. `DFN3::new(session)` preserves the supplied session's policy. A requested provider must still register successfully: missing GPU libraries or provider initialization failures remain errors. Native GL/GLES/Vulkan/wgpu/D3D12 implementations are unchanged and do not gain a CPU executor.
+
+### Browser WebGPU (WASM)
+
+On `wasm32-unknown-unknown`, the `wgpu` feature exposes the asynchronous Rust type `anr::wgpu::web::DFN3` (`anr_wgpu::web::DFN3` when using the backend directly). It loads model bytes with `from_bytes(...).await`, rather than reading a filesystem path. Its `run(sample_rate, input, output).await` is separate from the native synchronous `NoiseReduction` trait. The model hash, WGSL kernels, frame schedule, and strength/reset behavior are shared with the native implementation.
+
+From a source checkout, install the target and a wasm-bindgen CLI matching `Cargo.lock`, then build the JavaScript/WASM package:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked --root target/web-tools
+python tools/build_wgpu_web.py
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+The helper creates `target/anr-wgpu-web/pkg/` and stages a module Worker beside it. It does not download the model: serve the pinned `models/dfn3.onnx` separately. HTTPS or localhost and an available hardware WebGPU adapter are required; there is no WebGL or CPU fallback. Build-time model download/copy features do not embed or fetch the model in the browser.
+
+For the source-root HTTP server, use this from a JavaScript module or browser console:
+
+```js
+const { default: init, DFN3 } = await import('/target/anr-wgpu-web/pkg/anr_wgpu.js');
+await init();
+const response = await fetch('/models/dfn3.onnx');
+if (!response.ok) throw new Error(`Model request failed: HTTP ${response.status}`);
+const stream = await DFN3.fromBytes(new Uint8Array(await response.arrayBuffer()));
+try {
+  stream.setFactor(80);
+  const output = await stream.run(48_000, new Float32Array(480));
+  console.log(output); // Replace the silence above with your own 48 kHz mono input.
+} finally {
+  stream.free();
+}
+```
+
+Reuse one stream across calls. `run` returns a JS-owned `Float32Array`; overlapping runs reject, and `factor()`, `setFactor(...)`, and `reset()` report an error while a run is pending. `free()` releases the wrapper without invalidating an already returned Promise. Device loss requires a new stream; `reset()` only clears audio/model state.
+
+For live audio, run inference in the [module Worker example](crates/anr-wgpu/examples/web/worker.js), not inside `AudioWorkletProcessor.process`. Requests carry `id` and `type`: `init` takes a model `ArrayBuffer`; `run` takes `sampleRate` and a `Float32Array` or `ArrayBuffer`; `setFactor` takes `factor`; `reset` and `dispose` need no payload. The Worker serializes requests and returns `{id, ok, output?, factor?, error?}`. Transfer model/input buffers and returned output buffers when passing messages; transferred buffers become detached in the sender.
+
+Collect continuous audio into multiples of **480 samples** before submitting it. Only the final short frame should be zero-padded; it advances a full model frame. This backend does not provide microphone capture, resampling, AudioWorklet buffering, delay compensation, or an end flush.
+
+The browser regression executes the generated WASM both directly and through the Worker, including reference output, reset, invalid input, partial-frame state, concurrent-call rejection, and freeing a wrapper during a run:
+
+```js
+const { runReference } = await import('/crates/anr-wgpu/tests/web/reference.js');
+await runReference('/target/anr-wgpu-web/pkg/anr_wgpu.js',
+  '/models/dfn3.onnx', '/target/anr-wgpu-web/worker.js');
+```
+
+Hardware WebGPU has been exercised on Windows / Edge 135 / NVIDIA Turing. Other browsers and mobile devices remain unverified; this is not a cross-device real-time guarantee. CI checks and links the WASM backend but does not run GPU inference.
+
+If Windows `sccache` reports command-line error 206 while compiling `web-sys`, disable the wrapper only for this build process:
+
+```sh
+python -c "import os, runpy; os.environ['RUSTC_WRAPPER']=''; runpy.run_path('tools/build_wgpu_web.py', run_name='__main__')"
+```
 
 ### Compute backends without ONNX Runtime
 
@@ -205,7 +259,7 @@ For native GL/GLES/Vulkan/wgpu/D3D12, all inference, including FFT, feature norm
 | `gl` | Windows desktop OpenGL 4.3; Linux hardware EGL device with desktop GL 4.3 and pbuffer, without X11 `DISPLAY`. Not macOS. |
 | `gles` | Windows WGL driver with native ES context support; Linux hardware EGL device/pbuffer. Both require OpenGL ES 3.1+. No Android, WebGL, or macOS context is provided. |
 | `vk` | Windows or Linux hardware Vulkan 1.1 device with compute queue. No window or surface. |
-| `wgpu` | Windows, Linux, or macOS hardware Vulkan, DX12, or Metal adapter, as available on that platform. No browser or software fallback. |
+| `wgpu` | Native hardware Vulkan/DX12/Metal on Windows/Linux/macOS; browser WebGPU on `wasm32-unknown-unknown` in a secure context. No software fallback. |
 | `dx` | Windows hardware D3D12 device and system D3DCompiler 47. No WARP, DirectML, or separately installed DXC. |
 
 Initialization failures return errors rather than falling back to CPU. The five GL/GLES/Vulkan/wgpu/D3D12 backends passed streaming reference and raw/WAV/stereo/batch CLI tests on native Windows / RTX 2080 Ti. GLES-only compilation, non-GPU tests, and Clippy also passed in WSL Ubuntu 24.04. These results do not establish cross-device performance or sound quality; Linux GPU paths, Android, and macOS remain unverified.
@@ -472,7 +526,7 @@ fn main() -> Result<()> {
 
 #### 调整降噪强度
 
-所有 DFN3 后端都支持 `NoiseReduction::set_factor(0..=100)`，按 `round(factor / 100 * 60)` 换算成分贝。只有 ORT 具体类型另外提供 `set_atten_lim_db` / `get_atten_lim_db`，可直接设置和读取 `0..=60` dB；它们不属于通用 trait，Compute 前端也不提供。
+所有原生 DFN3 后端都支持 `NoiseReduction::set_factor(0..=100)`，按 `round(factor / 100 * 60)` 换算成分贝。只有 ORT 具体类型另外提供 `set_atten_lim_db` / `get_atten_lim_db`，可直接设置和读取 `0..=60` dB；它们不属于通用 trait，Compute 前端也不提供。
 
 超出范围的值会被限制到最近的上限或下限；`NaN` 不改变当前设置，正无穷按上限处理，负无穷按下限处理。
 
@@ -515,7 +569,7 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 | `gl` | 提供 `anr::gl::DFN3`，直接使用原生 OpenGL 4.3 Compute Shader，不依赖 ORT。 |
 | `gles` | 提供 `anr::gles::DFN3`，使用真实原生 OpenGL ES 3.1+ Compute 上下文，不依赖 ORT。 |
 | `vk` | 提供 `anr::vk::DFN3`，使用原生 Vulkan 1.1 Compute，不依赖 ORT 或 wgpu。 |
-| `wgpu` | 提供 `anr::wgpu::DFN3`，使用 wgpu 的硬件 adapter，不依赖 ORT。 |
+| `wgpu` | 原生平台提供 `anr::wgpu::DFN3`；`wasm32-unknown-unknown` 提供异步 `anr::wgpu::web::DFN3`，均不依赖 ORT。 |
 | `dx` | 提供 `anr::dx::DFN3`，使用原生 Windows Direct3D 12 Compute，不是 DirectML 或 wgpu。 |
 | `ort-download-binaries` | 默认下载选项，只在启用 `ort` 后生效，本身不会启用后端。 |
 | `download-models` | 默认启用，将固定 DFN3 模型下载并校验到持久 Cargo 缓存；构建时可用 `ANR_MODEL_PATH` 指定本地文件。 |
@@ -531,6 +585,60 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，先配置 `SessionBuilder`，调用 `anr::ort::session_from_file(builder, path, &providers)`，再传给 `DFN3::new(session)`。
 
 项目的 ORT 默认策略允许 GPU provider 与 CPU 算子混合执行。CLI 和 benchmark 保留 ORT 对不支持或更适合 CPU 的算子的正常分配，不是 benchmark 的临时选项；`DFN3::new(session)` 保留调用方 Session 的策略。请求的 provider 仍须成功注册，缺少 GPU 库或 provider 初始化失败仍报错。原生 GL/GLES/Vulkan/wgpu/D3D12 实现不变，不因此新增 CPU 执行器。
+
+### 浏览器 WebGPU（WASM）
+
+`wasm32-unknown-unknown` 目标启用 `wgpu` 后，使用异步 Rust 类型 `anr::wgpu::web::DFN3`；直接依赖后端时为 `anr_wgpu::web::DFN3`。通过 `from_bytes(...).await` 加载模型字节，不读取文件路径；`run(sample_rate, input, output).await` 不实现原生同步 `NoiseReduction` trait。模型摘要、WGSL、帧调度及强度/reset 语义与原生实现共用。
+
+在源码工作区安装 target 和与 `Cargo.lock` 匹配的 wasm-bindgen CLI，然后构建 JavaScript/WASM 包：
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked --root target/web-tools
+python tools/build_wgpu_web.py
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+脚本生成 `target/anr-wgpu-web/pkg/`，并将 module Worker 放在其旁边；不会下载模型，需另行提供固定版本的 `models/dfn3.onnx`。浏览器须支持硬件 WebGPU，并运行在 HTTPS 或 localhost；不退回 WebGL 或 CPU。构建期模型下载/复制功能不会将模型嵌入 WASM，也不会在浏览器中下载模型。
+
+以上 HTTP 服务以仓库根目录为起点，可在 JavaScript module 或浏览器控制台使用：
+
+```js
+const { default: init, DFN3 } = await import('/target/anr-wgpu-web/pkg/anr_wgpu.js');
+await init();
+const response = await fetch('/models/dfn3.onnx');
+if (!response.ok) throw new Error(`模型请求失败：HTTP ${response.status}`);
+const stream = await DFN3.fromBytes(new Uint8Array(await response.arrayBuffer()));
+try {
+  stream.setFactor(80);
+  const output = await stream.run(48_000, new Float32Array(480));
+  console.log(output); // 将上面的静音替换为自己的 48 kHz 单声道采样。
+} finally {
+  stream.free();
+}
+```
+
+连续音频复用同一个实例。`run` 返回 JavaScript 自有的 `Float32Array`；重叠的 `run` 会拒绝，处理期间调用 `factor()`、`setFactor(...)` 或 `reset()` 会返回错误。`free()` 释放包装对象，但不会使此前已返回的 Promise 失效。设备丢失后须重新创建实例；`reset()` 只重置音频和模型状态。
+
+实时音频应在 [module Worker 示例](crates/anr-wgpu/examples/web/worker.js) 中推理，不在 `AudioWorkletProcessor.process` 内等待 GPU。请求带 `id` 和 `type`：`init` 接收模型 `ArrayBuffer`；`run` 接收 `sampleRate` 和 `Float32Array` 或 `ArrayBuffer` 输入；`setFactor` 接收 `factor`；`reset`、`dispose` 无额外参数。Worker 串行处理，返回 `{id, ok, output?, factor?, error?}`。消息传递可转移模型、输入和输出缓冲，转移后发送方的缓冲会被分离，不能继续使用。
+
+连续输入先累积成 **480 个采样的整数倍**，只有结束时的短帧才补零；补零也会推进完整一帧状态。本后端不提供麦克风采集、重采样、AudioWorklet 缓冲、延迟补偿或结束 flush。
+
+浏览器回归运行真正生成的 WASM，分别通过直接调用和 Worker 检验 reference、reset、无效输入、尾帧状态、并发拒绝及处理期间释放包装对象：
+
+```js
+const { runReference } = await import('/crates/anr-wgpu/tests/web/reference.js');
+await runReference('/target/anr-wgpu-web/pkg/anr_wgpu.js',
+  '/models/dfn3.onnx', '/target/anr-wgpu-web/worker.js');
+```
+
+已在 Windows / Edge 135 / NVIDIA Turing 的硬件 WebGPU 上实跑；其他浏览器和移动设备未验证，不保证跨设备实时性。CI 检查并链接 WASM，不冒充 GPU 推理验收。
+
+若 Windows 上的 `sccache` 编译 `web-sys` 时报告命令行长度错误 206，可仅为这次构建禁用 wrapper：
+
+```sh
+python -c "import os, runpy; os.environ['RUSTC_WRAPPER']=''; runpy.run_path('tools/build_wgpu_web.py', run_name='__main__')"
+```
 
 ### 不依赖 ONNX Runtime 的 Compute 后端
 
@@ -561,7 +669,7 @@ fn main() -> Result<()> {
 | `gl` | Windows 桌面 OpenGL 4.3；Linux 硬件 EGL device 需支持桌面 GL 4.3 与 pbuffer，不依赖 X11 `DISPLAY`；不支持 macOS。 |
 | `gles` | Windows WGL 驱动需支持原生 ES context；Linux 使用硬件 EGL device/pbuffer，均要求 OpenGL ES 3.1+。本后端未提供 Android、WebGL 或 macOS context。 |
 | `vk` | Windows 或 Linux 的硬件 Vulkan 1.1 device，提供 compute queue；不创建窗口或 surface。 |
-| `wgpu` | Windows、Linux 或 macOS 上可用的硬件 Vulkan、DX12 或 Metal adapter；不是浏览器后端，不使用软件 fallback。 |
+| `wgpu` | Windows/Linux/macOS 的原生硬件 Vulkan/DX12/Metal；`wasm32-unknown-unknown` 的浏览器 WebGPU 需安全上下文。不使用软件 fallback。 |
 | `dx` | Windows 硬件 D3D12 device 和系统 D3DCompiler 47；不使用 WARP、DirectML，也不要求另装 DXC。 |
 
 初始化失败直接返回错误，不退回 CPU。GL/GLES/Vulkan/wgpu/D3D12 这五种后端均已在原生 Windows / RTX 2080 Ti 上通过连续帧独立 ONNX 数值基准及 raw/WAV、立体声、批处理 CLI 验收；GLES-only 编译、非 GPU 测试与 Clippy 也已在 WSL Ubuntu 24.04 通过。不据此保证跨设备性能或音质；Linux GPU 路径、Android 和 macOS 尚未实跑。

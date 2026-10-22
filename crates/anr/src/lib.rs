@@ -37,10 +37,13 @@ pub mod vk {
     pub use anr_vk::DFN3;
 }
 
-/// Native wgpu Compute backend for the supported DFN3 model.
+/// wgpu Compute backend: native `DFN3`, or browser `web::DFN3` on WebAssembly.
 #[cfg(feature = "wgpu")]
 pub mod wgpu {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub use anr_wgpu::DFN3;
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    pub use anr_wgpu::web;
 }
 
 /// Native Windows D3D12 Compute backend for the supported DFN3 model.

@@ -16,7 +16,7 @@ The library does not read microphones, decode WAV, or resample audio. You'll nee
 | `gl` | OpenGL | `anr::gl::DFN3` |
 | `gles` | OpenGL ES | `anr::gles::DFN3` |
 | `vk` | Vulkan | `anr::vk::DFN3` |
-| `wgpu` | wgpu | `anr::wgpu::DFN3` |
+| `wgpu` | Native wgpu / browser WebGPU | Native `anr::wgpu::DFN3`; WASM `anr::wgpu::web::DFN3` |
 | `dx` | Direct3D 12 | `anr::dx::DFN3` |
 | `cuda` | Native CUDA Driver/NVRTC | `anr::cuda::DFN3` |
 | `tensorrt` | Native TensorRT + CUDA DSP/FFT | `anr::tensorrt::DFN3` |
@@ -90,7 +90,7 @@ Without a backend feature, `anr` exports `NoiseReduction`, `Error`, `Result`, an
 
 ### Adjust the strength
 
-All DFN3 implementations expose `set_factor(0..=100)` through `NoiseReduction`, mapped to dB as `round(factor / 100 * 60)`. Only `anr::ort::DFN3` additionally provides `set_atten_lim_db` / `get_atten_lim_db` for direct `0..=60` dB access. Those methods are not part of the trait or compute API.
+All native DFN3 implementations expose `set_factor(0..=100)` through `NoiseReduction`, mapped to dB as `round(factor / 100 * 60)`. Only `anr::ort::DFN3` additionally provides `set_atten_lim_db` / `get_atten_lim_db` for direct `0..=60` dB access. Those methods are not part of the trait or compute API.
 
 Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive and negative infinity use the upper and lower bounds respectively.
 
@@ -128,7 +128,7 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 ### Select features and the ORT runtime
 
 - `ort`: provides `DFN3`. With default features, downloads and copies CPU ONNX Runtime libraries at build time; requires network access and platform support.
-- `gl`, `gles`, `vk`, `wgpu`, `dx`: enable the corresponding compute backend and `anr::<backend>::DFN3`, without enabling ORT.
+- `gl`, `gles`, `vk`, `wgpu`, `dx`: enable the corresponding native compute backend and `anr::<backend>::DFN3`, without enabling ORT. On `wasm32-unknown-unknown`, `wgpu` instead provides the asynchronous `anr::wgpu::web::DFN3`.
 - `cuda`, `tensorrt`, `openvino`, `opencl`: enable independent native backends and their `anr::<backend>::DFN3` modules, without ORT. TensorRT/OpenVINO require build-time C++ SDKs; enabling all features therefore requires those SDKs.
 - `ort-download-binaries`: the default, weak runtime-download option. It does not activate `anr-ort` by itself; automatic model preparation is independent of ORT.
 - `download-models`: enabled by default; downloads and caches the pinned DFN3 model unless `ANR_MODEL_PATH` supplies a local file.
@@ -149,9 +149,27 @@ ORT GPU sessions may use CPU kernels for unsupported or CPU-preferred operators.
 The shared loader prepares CUDA/TensorRT graphs in memory before session creation; it never overwrites the ONNX file or runs conversion per audio frame. CUDA's unsupported sigmoid convolution fusion is expanded; TensorRT additionally lowers eligible static state sequences and safe tensor conditionals. CPU/DirectML and native compute are unchanged. `anr::ort::prepare_model` and `ModelTarget` expose the same preparation for callers who already own model bytes; direct upstream session loading bypasses it.
 
 
+### Browser WebGPU
+
+With `default-features = false, features = ["wgpu"]` and the `wasm32-unknown-unknown` target, use `anr::wgpu::web::DFN3`. It is an asynchronous API, not an implementation of the synchronous `NoiseReduction: Send` trait. In your WASM async context, after the application has supplied model bytes and mono audio:
+
+```rust,ignore
+use anr::wgpu::web::DFN3;
+
+let mut stream = DFN3::from_bytes(&model_bytes).await?;
+stream.set_factor(80.0);
+let mut output = vec![0.0; input.len()];
+stream.run(DFN3::SAMPLE_RATE, &input, &mut output).await?;
+stream.reset();
+```
+
+Reuse the same stream for continuous audio and submit multiples of 480 samples, except for the final short frame. The model hash, strength, reset, and padding behavior are unchanged. Browser initialization and GPU readback are asynchronous; there is no filesystem loading, WebGL, or CPU fallback. HTTPS/localhost and hardware WebGPU are required. Default model download/copy features do not supply browser assets.
+
+See the [browser build and JavaScript instructions](../../README.md#browser-webgpu-wasm) and [module Worker example](../anr-wgpu/examples/web/worker.js). The generated JS class provides `DFN3.fromBytes`, `run`, `factor`, `setFactor`, `reset`, and `free`; it rejects overlapping operations, while the example Worker serializes requests. Microphone capture, resampling, AudioWorklet buffering, delay compensation, and end flush remain the application's responsibility.
+
 ### Compute backends without ORT
 
-Enable `default-features = false, features = ["gles"]` and construct `anr::gles::DFN3::from_file(path)`, or select `gl`, `vk`, `wgpu`, or `dx` with the corresponding module and feature. Each implements `NoiseReduction`, owns a worker thread and GPU-resident weights/state, and waits synchronously for each output. The common fixed plan and WGSL kernels live in `anr-dfn3`; native GL/GLES/Vulkan/D3D12 use Naga-generated GLSL/GLSL ES/SPIR-V/HLSL. No backend substitutes ORT or CPU inference.
+On native platforms, enable `default-features = false, features = ["gles"]` and construct `anr::gles::DFN3::from_file(path)`, or select `gl`, `vk`, `wgpu`, or `dx` with the corresponding module and feature. Each native implementation uses `NoiseReduction`, owns a worker thread and GPU-resident weights/state, and waits synchronously for each output. The common fixed plan and WGSL kernels live in `anr-dfn3`; native GL/GLES/Vulkan/D3D12 use Naga-generated GLSL/GLSL ES/SPIR-V/HLSL. No backend substitutes ORT or CPU inference.
 
 ```toml
 anr = { version = "0.1.1", default-features = false, features = ["gles"] }
@@ -258,7 +276,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 | `gl` | OpenGL | `anr::gl::DFN3` |
 | `gles` | OpenGL ES | `anr::gles::DFN3` |
 | `vk` | Vulkan | `anr::vk::DFN3` |
-| `wgpu` | wgpu | `anr::wgpu::DFN3` |
+| `wgpu` | 原生 wgpu / 浏览器 WebGPU | 原生 `anr::wgpu::DFN3`；WASM `anr::wgpu::web::DFN3` |
 | `dx` | Direct3D 12 | `anr::dx::DFN3` |
 
 只用 ORT 以外的后端时，在 Cargo 配置中设置 `default-features = false`，并在 `features` 中填写后端名称。例如：
@@ -332,7 +350,7 @@ fn main() -> Result<()> {
 
 ### 调整降噪强度
 
-所有 DFN3 实现都通过 `NoiseReduction` 提供 `set_factor(0..=100)`，按 `round(factor / 100 * 60)` 换算成分贝。只有 `anr::ort::DFN3` 另外提供 `set_atten_lim_db` / `get_atten_lim_db`，用于直接访问 `0..=60` dB；它们不属于通用 trait 或 Compute API。
+所有原生 DFN3 实现都通过 `NoiseReduction` 提供 `set_factor(0..=100)`，按 `round(factor / 100 * 60)` 换算成分贝。只有 `anr::ort::DFN3` 另外提供 `set_atten_lim_db` / `get_atten_lim_db`，用于直接访问 `0..=60` dB；它们不属于通用 trait 或 Compute API。
 
 超出范围的值会被限制到最近的上限或下限；`NaN` 不改变当前设置，正无穷按上限处理，负无穷按下限处理。
 
@@ -370,7 +388,7 @@ ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment
 ### 选择 features 和 ORT 运行库
 
 - `ort`：提供 `DFN3`；保留默认 features 时，在构建中下载并复制 CPU 运行库，需要网络和平台支持。
-- `gl`、`gles`、`vk`、`wgpu`、`dx`：启用对应 Compute 后端和 `anr::<backend>::DFN3`，不会启用 ORT。
+- `gl`、`gles`、`vk`、`wgpu`、`dx`：启用对应原生 Compute 后端和 `anr::<backend>::DFN3`，不会启用 ORT。`wasm32-unknown-unknown` 目标下，`wgpu` 改为提供异步 `anr::wgpu::web::DFN3`。
 - `cuda`、`tensorrt`、`openvino`、`opencl`：启用独立原生后端和对应 `anr::<backend>::DFN3` 模块，不启用 ORT。TensorRT/OpenVINO 构建需要 C++ SDK，因此启用全部 features 也需要这些 SDK。
 - `ort-download-binaries`：默认启用的弱运行库下载选项，不会单独激活 `anr-ort`；自动模型准备与 ORT 无关。
 - `download-models`：默认启用，下载并缓存固定 DFN3 模型；设置 `ANR_MODEL_PATH` 时改用本地文件。
@@ -391,9 +409,27 @@ ORT GPU Session 可以让不支持或更适合 CPU 的算子使用 CPU kernel。
 共用加载入口在创建 CUDA/TensorRT Session 前于内存中转换图，不覆盖原 ONNX，也不在每帧重复转换。CUDA 展开不支持的 sigmoid 卷积融合；TensorRT 另转换符合条件的静态状态序列和可安全展开的张量分支。CPU、DirectML 与原生 Compute 保持原样。已有模型字节的调用方可使用 `anr::ort::prepare_model` 和 `ModelTarget`；直接用上游 API 创建 Session 会绕过这一步。
 
 
+### 浏览器 WebGPU
+
+使用 `default-features = false, features = ["wgpu"]`，编译目标为 `wasm32-unknown-unknown` 时，通过 `anr::wgpu::web::DFN3` 调用。它是独立的异步 API，不实现同步 `NoiseReduction: Send` trait。在 WASM 异步上下文中，应用提供模型字节和单声道采样后：
+
+```rust,ignore
+use anr::wgpu::web::DFN3;
+
+let mut stream = DFN3::from_bytes(&model_bytes).await?;
+stream.set_factor(80.0);
+let mut output = vec![0.0; input.len()];
+stream.run(DFN3::SAMPLE_RATE, &input, &mut output).await?;
+stream.reset();
+```
+
+连续音频复用同一实例，除结束时的短帧外，按 480 采样的整数倍提交。模型摘要、强度、reset 和补零行为不变。浏览器设备初始化及 GPU 回读使用异步等待，不读取文件路径，不退回 WebGL 或 CPU；需要 HTTPS/localhost 和硬件 WebGPU。默认模型下载/复制功能不会准备浏览器资源。
+
+构建与 JavaScript 调用见[浏览器使用说明](../../README.md#browser-webgpu-wasm)，另有 [module Worker 示例](../anr-wgpu/examples/web/worker.js)。生成的 JS 类提供 `DFN3.fromBytes`、`run`、`factor`、`setFactor`、`reset`、`free`；直接调用会拒绝重叠操作，示例 Worker 则串行处理请求。麦克风采集、重采样、AudioWorklet 缓冲、延迟补偿和结束 flush 仍由应用处理。
+
 ### 不使用 ORT 的 Compute 后端
 
-例如启用 `default-features = false, features = ["gles"]`，使用 `anr::gles::DFN3::from_file(path)` 创建实例；其余后端对应 `gl`、`vk`、`wgpu`、`dx` feature 和模块。均实现 `NoiseReduction`，每实例持有工作线程、GPU 常驻权重和状态，`run` 同步返回。`anr-dfn3` 共用固定执行顺序和 WGSL 算子，原生 GL/GLES/Vulkan/D3D12 使用 Naga 生成 GLSL/GLSL ES/SPIR-V/HLSL，不替换成 ORT 或 CPU 推理。
+在原生平台，例如启用 `default-features = false, features = ["gles"]`，使用 `anr::gles::DFN3::from_file(path)` 创建实例；其余后端对应 `gl`、`vk`、`wgpu`、`dx` feature 和模块。这些原生实现使用 `NoiseReduction`，每实例持有工作线程、GPU 常驻权重和状态，`run` 同步返回。`anr-dfn3` 共用固定执行顺序和 WGSL 算子，原生 GL/GLES/Vulkan/D3D12 使用 Naga 生成 GLSL/GLSL ES/SPIR-V/HLSL，不替换成 ORT 或 CPU 推理。
 
 ```toml
 anr = { version = "0.1.1", default-features = false, features = ["gles"] }

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use anr_core::{Error, Result};
 use prost::Message;
@@ -20,7 +19,7 @@ fn validate_model_bytes(bytes: &[u8]) -> Result<()> {
 }
 
 /// Reads the supported model without constructing a compute dispatch plan.
-pub fn model_bytes(path: &Path) -> Result<Vec<u8>> {
+pub fn model_bytes(path: &std::path::Path) -> Result<Vec<u8>> {
     let bytes = std::fs::read(path).map_err(Error::backend)?;
     validate_model_bytes(&bytes)?;
     Ok(bytes)
@@ -55,10 +54,9 @@ pub(crate) struct Weights {
 }
 
 impl Weights {
-    pub(crate) fn load(path: &Path) -> Result<Self> {
-        let bytes = model_bytes(path)?;
-        let decoded =
-            ModelProto::decode(bytes.as_slice()).map_err(|e| Error::InvalidModel(e.to_string()))?;
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        validate_model_bytes(bytes)?;
+        let decoded = ModelProto::decode(bytes).map_err(|e| Error::InvalidModel(e.to_string()))?;
         let graph = decoded
             .graph
             .ok_or_else(|| Error::InvalidModel("模型没有计算图".into()))?;

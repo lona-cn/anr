@@ -1,12 +1,35 @@
+#[cfg(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos",
+    all(target_arch = "wasm32", target_os = "unknown")
+))]
+mod shared;
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod web;
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub(crate) use web::Gpu;
+
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod native;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub(crate) use native::Gpu;
 
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos",
+    all(target_arch = "wasm32", target_os = "unknown")
+)))]
 pub(crate) struct Gpu;
 
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos",
+    all(target_arch = "wasm32", target_os = "unknown")
+)))]
 impl Gpu {
     pub(crate) fn new(_: anr_dfn3::Model) -> anr_core::Result<Self> {
         Err(anr_dfn3::backend(
@@ -15,7 +38,12 @@ impl Gpu {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos",
+    all(target_arch = "wasm32", target_os = "unknown")
+)))]
 impl anr_dfn3::Executor for Gpu {
     fn frame(
         &mut self,

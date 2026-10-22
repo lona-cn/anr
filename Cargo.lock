@@ -305,8 +305,11 @@ dependencies = [
  "anr-core",
  "anr-dfn3",
  "bytemuck",
+ "js-sys",
  "pollster",
  "tempfile",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wgpu",
 ]
 

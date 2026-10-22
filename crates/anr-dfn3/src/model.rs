@@ -24,14 +24,27 @@ pub struct Model {
 impl Model {
     /// Validates the model identity and constructs the immutable GPU layout.
     pub fn load(path: &Path) -> Result<Self> {
-        Self::load_aligned(path, 1)
+        let bytes = std::fs::read(path).map_err(anr_core::Error::backend)?;
+        Self::from_bytes(&bytes)
     }
 
     /// Aligns each scratch tensor to a power of two, up to 64 f32 elements
     /// (256 bytes). The model's packed recurrent-state offsets stay unchanged.
     pub fn load_aligned(path: &Path, alignment: u32) -> Result<Self> {
-        let mut weights = Weights::load(path)?;
+        let bytes = std::fs::read(path).map_err(anr_core::Error::backend)?;
+        Self::from_bytes_aligned(&bytes, alignment)
+    }
+
+    /// Validates the supported model bytes and constructs the immutable GPU layout.
+    ///
+    /// The same SHA-256 check applies to files and browser-loaded model data.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::from_bytes_aligned(bytes, 1)
+    }
+
+    fn from_bytes_aligned(bytes: &[u8], alignment: u32) -> Result<Self> {
         let mut arena = Arena::new(alignment)?;
+        let mut weights = Weights::from_bytes(bytes)?;
         let input = arena.alloc(FRAME_SIZE as u32);
         let output = arena.alloc(FRAME_SIZE as u32);
         let network = Network::build(&mut weights, &mut arena)?;

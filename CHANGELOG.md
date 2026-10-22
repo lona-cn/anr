@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- `anr-wgpu` 新增 `wasm32-unknown-unknown` 浏览器 WebGPU：通过 `anr::wgpu::web::DFN3` 异步处理，或使用生成的 JavaScript `DFN3` 类；共用模型字节校验、权重布局、WGSL 和固定调度，原生同步 API 不变，不新增 CPU/WebGL fallback。
+- 新增 Web 包构建脚本、可转移缓冲的串行 module Worker 示例与真实 WASM 浏览器 reference 回归；覆盖强度/reset、尾帧状态、无效输入、并发拒绝和处理中释放包装对象，并为初始化/映射错误与 future 取消提供设备和状态清理。
 - 新增独立的 `anr-lite`，使用 Burn 0.22.1 实现 ANR-Lite-48：64-band ERB／96-bin 低频双分辨率编码器、两层 128 维四分组 GRU 与跨组混合、全带增益和五 tap 复数残差输出。默认使用 CPU Flex，可选 wgpu；不修改现有 DFN3 推理后端或 CLI。
 - `anr-lite` 提供可微 960 点混合基 FFT、稀疏 ERB 特征、因果归一化、显式流式状态、overlap-add、尾帧补零与 flush；整段入口补偿 1440 samples 的流式延迟。支持批处理、跨帧梯度、显式 detach 和 Burn Module records。
 - 新增未训练模型的合成音频 smoke 示例及数值／梯度回归；不启动训练、不下载数据集、不提供预训练权重，不以随机初始化输出宣称降噪质量或性能优势。

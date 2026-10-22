@@ -1,3 +1,5 @@
+#![cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+
 use anr_core::{Error, NoiseReduction};
 use anr_wgpu::DFN3;
 
