@@ -4,7 +4,7 @@
 
 ## English
 
-`anr-cli` installs the `anr` command for denoising audio files, serial batches, and stdin/stdout audio. It calls DFN3 through `anr`: ONNX Runtime by default, or model-specific OpenGL, OpenGL ES, Vulkan, wgpu, and Direct3D 12 Compute backends without ORT. The CLI handles decoding, band-limited resampling, and multiple channels. Runtime use requires neither FFmpeg nor Python.
+`anr-cli` installs the `anr` command for denoising audio files, serial batches, and stdin/stdout audio. It calls DFN3 through `anr`: ONNX Runtime by default, or independent OpenGL, OpenGL ES, Vulkan, wgpu, Direct3D 12 Compute, CUDA, TensorRT, OpenVINO, and OpenCL backends without ORT. The CLI handles decoding, band-limited resampling, and multiple channels. Runtime use requires neither FFmpeg nor Python.
 
 Source builds require the **latest stable Rust toolchain**. Default features download and prepare the pinned DFN3 model at build time, including with `cargo install`; application ZIPs bundle that model and CPU runtime. `--model` is optional: an explicit path wins, otherwise the CLI checks `models/dfn3.onnx` beside the executable and then the model source recorded at build time. No checkout-relative path is assumed. The ORT backend requires exactly these three inputs and three outputs, all `f32`:
 
@@ -95,8 +95,9 @@ anr backends [--json]
 | `--output PATH` | Destination for one input; `-` means stdout. Cannot be combined with `--output-dir`. |
 | `--output-dir DIR` | Processes files serially, using each input's stem with `.wav`, or `.f32le` when raw output is selected. Does not rename colliding outputs. |
 | `--model PATH` | Optional model override. Otherwise uses the bundled or build-time model; an explicit invalid path is an error, not a fallback. |
-| `--backend ort\|gl\|gles\|vk\|wgpu\|dx` | Defaults to `ort`. Each compute backend requires its matching Cargo feature and the exact supported model below. |
-| `--provider cpu` | ORT only; omitted means `cpu` for ORT. Other providers require matching features and runtime support. Any explicit `--provider` with a compute backend is an argument error. |
+| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | Defaults to `ort`. Each native backend requires its matching opt-in Cargo feature and the exact supported model below. |
+| `--provider cpu` | ORT only; omitted means `cpu` for ORT. Other providers require matching features and runtime support. Any explicit `--provider` with a non-ORT backend is an argument error. |
+| `--openvino-device CPU\|GPU\|GPU.n\|NPU` | OpenVINO only; omitted means explicit `CPU`. `GPU.n` selects a GPU index, such as `GPU.0`. GPU/NPU failures do not fall back to CPU. Invalid use with another backend is an argument error. |
 | `--strength 80` | Defaults to 80. Accepts finite values in `0..=100`; rejects NaN, infinity, and out-of-range values rather than clamping them. |
 | `--input-format auto\|f32le` | Defaults to detecting audio with headers. Raw input requires explicit `f32le`. |
 | `--input-rate HZ` / `--input-channels N` | Required positive values for raw input. Cannot override the specifications in an audio header. |
@@ -176,16 +177,16 @@ cargo build -p anr-cli --no-default-features --features gles
 cargo build -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
 ```
 
-With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. CUDA/TensorRT, DirectML, CoreML, and XNNPACK flags forward to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them.
+With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. The `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, and `ort-xnnpack` flags forward ORT providers to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them. They are distinct from the native `cuda` and `tensorrt` features.
 
 For example, build with DirectML on Windows and select `--provider directml`, or build with CoreML on macOS and select `--provider coreml`. The default remains `cpu`. The project normally allows ORT to place individual operators on CPU alongside CUDA, TensorRT, DirectML, or CoreML when unsupported by that provider or preferred by ORT's placement rules. This is the default policy, not a temporary option; selecting a GPU provider does not promise GPU-only execution. Explicit provider registration or initialization failures remain errors and do not silently replace an unavailable provider with CPU. XNNPACK is itself a CPU provider and also allows ordinary CPU kernels. In `backends --json`, `compiled` means support was built in; `runtime_available: null` means runtime availability has not been checked, not that a model has run successfully.
 
-For CUDA/TensorRT, the CLI automatically prepares an in-memory model before creating each session, using the same `anr-ort` entry point as the benchmark. No extra flag, converted model file, or Python is required. The original ONNX and weights remain unchanged; attenuation stays adjustable. CPU/DirectML and native compute keep their existing loading paths.
+For ORT's CUDA/TensorRT providers, the CLI automatically prepares an in-memory model before creating each session, using the same `anr-ort` entry point as the benchmark. No extra flag, converted model file, or Python is required. The original ONNX and weights remain unchanged; attenuation stays adjustable. CPU/DirectML and native backends keep their existing loading paths.
 
 
 For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
 
-The optional `gl`, `gles`, `vk`, `wgpu`, and `dx` features enable compute backends without enabling ONNX Runtime. Use `--no-default-features` to omit ORT, and enable any subset. The default `--backend` remains `ort` even if ORT was not compiled; a compute-only build must explicitly select its backend. It cannot be combined with `--provider`, including `--provider cpu`.
+The optional `gl`, `gles`, `vk`, `wgpu`, `dx`, `cuda`, `tensorrt`, `openvino`, and `opencl` features enable native backends without enabling ONNX Runtime. Use `--no-default-features` to omit ORT, and enable any subset supported by your environment. The default `--backend` remains `ort` even if ORT was not compiled; a native-only build must explicitly select its backend. It cannot be combined with `--provider`, including `--provider cpu`.
 
 For a GLES-only source run, use Cargo so the command runs the binary just built, not an older `anr` on `PATH`:
 
@@ -193,20 +194,61 @@ For a GLES-only source run, use Cargo so the command runs the binary just built,
 cargo run -p anr-cli --release --no-default-features --features gles -- denoise input.wav --model /path/to/dfn3.onnx --backend gles --output clean.wav
 ```
 
-All five use the original ONNX as a parameter container, not a generic executable graph. The fixed model must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected even with identical port shapes. They share the fixed execution plan and WGSL operators through `anr-dfn3`, execute FFT, neural network, and synthesis on GPU, and preserve 48 kHz / 480-sample framing, CLI resampling, independent channel state, strength, reset, and exact output length. Strength zero is the original attenuation branch, not an audio bypass.
+The GL/GLES/Vulkan/wgpu/D3D12 backends use the original ONNX as a parameter container, not a generic executable graph. The fixed model must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected even with identical port shapes. They share the fixed execution plan and WGSL operators through `anr-dfn3`, execute FFT, neural network, and synthesis on GPU, and preserve 48 kHz / 480-sample framing, CLI resampling, independent channel state, strength, reset, and exact output length. Strength zero is the original attenuation branch, not an audio bypass.
 
 `gles` requires a real native ES 3.1+ context on Windows/WGL or Linux hardware EGL/pbuffer. It shares `anr-gl`'s executor, generates GLSL ES 310, and maps the output frame after a fence instead of calling desktop-only `glGetBufferSubData`. Desktop-GL ES compatibility is not accepted. This backend does not provide Android, WebGL, or macOS context creation.
 
 `gl` requires Windows desktop GL 4.3 or Linux hardware EGL with desktop GL 4.3/pbuffer; `vk` requires Windows/Linux hardware Vulkan 1.1; `wgpu` uses a native hardware Vulkan/DX12/Metal adapter on Windows/Linux/macOS; `dx` uses Windows hardware D3D12 and system D3DCompiler 47. Native VK/DX do not go through wgpu, and DX is not DirectML. No backend silently selects CPU/software rendering. Unsupported hardware or initialization failures are errors; macOS GPU execution has not been verified.
 
-Do not pass `--provider` with compute backends, including `--provider cpu`. `backends --json` lists all six names without creating a GPU device. Compute entries have no ORT providers and leave `runtime_available` as `null`. Verbose diagnostics identify the selected backend; only ORT emits provider diagnostics.
+Do not pass `--provider` with native backends, including `--provider cpu`. `backends --json` lists all ten names without loading runtimes or creating a GPU device. Native entries have no ORT providers and leave `runtime_available` as `null`: this means availability was not probed, not that libraries or devices are ready. Verbose diagnostics identify the selected backend; only ORT emits provider diagnostics.
 
 Real-model CLI tests are opt-in. Set `ANR_DFN3_MODEL` and run `cargo test -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx --test cli compute_ -- --include-ignored`, enabling only features supported by your machine. These tests exercise raw/WAV, independent stereo state, partial-frame length, batch reset, and strength. Every enabled compute backend needs real hardware; an ignored test is not a passing hardware result.
+
+### Native CUDA, TensorRT, OpenVINO, and OpenCL deployment
+
+These four opt-in backends use the same fixed model SHA-256 above and preserve CLI resampling, independent channel state, strength, reset, partial-frame handling, and output length. CUDA and OpenCL run the complete fixed FP32 DSP/FFT/neural plan on GPU. CUDA uses Driver/NVRTC APIs and replay graphs; OpenCL requires a hardware GPU ICD with OpenCL 1.2+, not a CPU implementation. TensorRT builds two real standard-layer neural engines plus CUDA DSP/FFT graphs, with strongly typed FP32 and TF32 disabled; it uses neither ORT, the ONNX parser, nor an inference plugin. There is no persistent TensorRT engine cache: initialization took 17.342 seconds in the recorded run, so do not assume fast cold startup.
+
+OpenVINO imports the original ONNX through its native Runtime, makes the recurrent state stateful, and creates a separate InferRequest for each stream. The default is explicit CPU, never AUTO/HETERO. `--openvino-device GPU`, `GPU.0`, or `NPU` requests that device only; missing devices or unsupported operators are errors, not CPU fallbacks. NPU arithmetic is device-dependent and is not promised to be FP32 merely because the model is FP32.
+
+CUDA and OpenCL need no build-time vendor SDK for their Rust crates, but still need compatible runtime libraries and drivers. TensorRT and OpenVINO require an existing SDK and a C++17 compiler at build time; their `build.rs` compiles a private shared shim, loaded by Rust through `libloading`. Nothing installs an SDK system-wide or downloads one automatically.
+
+```text
+cargo build -p anr-cli --release --no-default-features --features cuda,opencl
+cargo run -p anr-cli --release --no-default-features --features cuda -- denoise input.wav --model /path/to/dfn3.onnx --backend cuda --output clean.wav
+```
+
+For SDK-enabled builds, configure actual SDK paths in the build environment first. For example in PowerShell (replace these paths):
+
+```powershell
+$env:TENSORRT_ROOT = "C:\sdk\TensorRT"
+$env:CUDA_ROOT = "C:\sdk\CUDA"
+$env:OPENVINO_ROOT = "C:\sdk\openvino"
+cargo build -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl
+```
+
+TensorRT needs headers and link libraries under `TENSORRT_ROOT` and `CUDA_ROOT` (or `CUDA_PATH`); `TENSORRT_LIB_DIR` and `CUDA_LIB_DIR` can override the link-library directories. OpenVINO accepts `OPENVINO_ROOT` or `OpenVINO_DIR` pointing into its SDK/CMake layout. The official OpenVINO wheel's `openvino` directory with `include/` and `libs/` is also a supported SDK source; Python is not a product runtime dependency.
+
+After building, use `--backend tensorrt`, `--backend opencl`, or `--backend openvino --openvino-device CPU`. In contrast, ORT CUDA uses the `ort-cuda` feature and `--backend ort --provider cuda`; ORT TensorRT uses `ort-tensorrt` and `--backend ort --provider tensorrt`. Native backends never inherit ORT's operator-level CPU placement policy.
+
+For custom application distribution, include the model and notices plus the following dependencies; do not rely on absolute paths embedded from the build machine:
+
+| Backend | Runtime deployment requirements |
+| --- | --- |
+| CUDA | NVIDIA Driver API 12.0+ and NVRTC major 12 or 13 (13 preferred), with a driver capable of loading the PTX produced by the selected NVRTC. Driver API 12.0 support alone does not guarantee compatibility with NVRTC 13 PTX. Windows loads `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`; Linux loads `libnvrtc.so.13` / `.12` / unversioned. Put matching NVRTC/builtins libraries on `PATH` (Windows) or `LD_LIBRARY_PATH` (Linux). |
+| TensorRT | `anr_tensorrt_native.dll` (Linux: `libanr_tensorrt_native.so`) from the Cargo build's `OUT_DIR`, plus compatible TensorRT/CUDA runtime libraries and driver. `ANR_TENSORRT_SHIM` overrides the shim **file**; `ANR_TENSORRT_RUNTIME` accepts a TensorRT DLL directory or library file. Also configure the vendor-library search path, including NVRTC/builtins. |
+| OpenVINO | `anr_openvino_native.dll` (`libanr_openvino_native.so` / `.dylib`) from `OUT_DIR`, plus matching OpenVINO Runtime, ONNX frontend, chosen device plugin, and their dependencies. `ANR_OPENVINO_SHIM` overrides the shim **file**; `ANR_OPENVINO_RUNTIME` points to the Runtime library **file**, not a directory. Preserve the vendor runtime/plugin layout and configure the platform library search path. |
+| OpenCL | System OpenCL ICD loader and a vendor hardware-GPU ICD/runtime/driver supporting OpenCL 1.2+. A loader alone is not a GPU implementation. |
+
+On Windows, the TensorRT loader matches the DLL names imported by the shim. Its default search order is the shim directory, the executable directory, existing absolute `PATH` directories in order, then the recorded SDK directories, with duplicates removed across stages. Empty/relative `PATH` entries do not enable current-working-directory searches. Explicit `ANR_TENSORRT_RUNTIME` and `CUDA_ROOT` / `CUDA_PATH` overrides always take precedence and must provide their matching runtime family; an invalid override is an error, not permission to select another directory or installed version. The loader does not rewrite the process `PATH`.
+
+Keep shims beside the executable or set their explicit overrides. Merely copying `anr` does not deploy these dependencies, and Cargo installation does not automatically collect the private shims or vendor libraries. Check each vendor's redistribution terms in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); driver/SDK redistribution is not granted by this project's license. Default release ZIPs remain CPU ORT packages and do not bundle these SDKs or native runtimes.
+
+To exercise real CLI paths after configuring the SDKs, runtimes, hardware, and `ANR_DFN3_MODEL`, run `cargo test -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl --test cli compute_ -- --include-ignored`, selecting only available features. Recorded Windows x64 acceptance completed with exit 0, 10 passed and 0 ignored, covering raw/WAV, independent stereo state, exact tail length, strength, and batch reset. CUDA/TensorRT/OpenCL ran on RTX 2080 Ti; OpenVINO ran explicitly on AMD Ryzen 7 5800X CPU. SDK/runtime versions were CUDA 13.3, TensorRT 10.16.1, and OpenVINO 2026.4.0. All four also passed the streaming reference. OpenVINO GPU compilation failed on the original graph's `NonZero_1_count` / `count_nonzero` kernel selection; NPU was not tested. These are not Linux/macOS GPU, other-device, sound-quality, or real-time guarantees.
 
 
 ### What has been tested
 
-CI is configured for Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`), using Rust stable. It runs ordinary workspace tests, the explicit CPU ORT real-model test, no-backend and compute-only non-GPU CLI tests, lint/compile/doc checks, and extracted-ZIP CPU inference. Hardware-dependent compute tests remain opt-in. This is a description of the workflow, not evidence that hosted jobs have passed. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+CI is configured for Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`), using Rust stable. SDK-free workspace gates exclude `anr-tensorrt` and `anr-openvino`; explicit feature sets avoid accidentally enabling SDK-dependent features through `--all-features`. The workflow covers ordinary tests, the explicit CPU ORT real-model test, no-backend and native-only non-GPU CLI tests, lint/compile/doc checks, and extracted-ZIP CPU inference. SDK builds and hardware-dependent native tests require separate configured environments. This is a description of the workflow, not evidence that hosted jobs have passed. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
 
@@ -214,7 +256,7 @@ Recorded local verification used Rust 1.99; that records the environment, not a 
 
 | Environment | Executed checks | Not established by these checks |
 | --- | --- | --- |
-| Windows x64 / RTX 2080 Ti | Real-model ORT inference; all five compute backends against the independent 61-frame reference; CLI raw/WAV, stereo isolation, tail length, strength, and batch reset. | Other GPUs' behavior, sound-quality improvement, or real-time performance. |
+| Windows x64 / RTX 2080 Ti | Real-model ORT inference; GL/GLES/Vulkan/wgpu/D3D12 against the independent 61-frame reference; CLI raw/WAV, stereo isolation, tail length, strength, and batch reset. | Other GPUs' behavior, sound-quality improvement, or real-time performance. |
 | WSL Ubuntu 24.04 x64 | ORT inference and CPU ZIP smoke checks; compute-only compilation and non-GPU tests, including GLES-only tests and Clippy. | Linux GPU execution or support for other Linux distributions/libc versions. |
 | macOS arm64/x64 | Native-runner workflow configuration only. | Local native, packaging/signing, or GPU results. |
 
@@ -228,7 +270,7 @@ Dependencies and model weights keep their own licenses. The supplied model asset
 
 ## 简体中文
 
-`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择不依赖 ORT 的模型专用 OpenGL、OpenGL ES、Vulkan、wgpu 和 Direct3D 12 Compute 后端。CLI 自行完成解码、带限重采样和多声道处理，运行时不需要 FFmpeg 或 Python。
+`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择不依赖 ORT 的独立 OpenGL、OpenGL ES、Vulkan、wgpu、Direct3D 12 Compute、CUDA、TensorRT、OpenVINO 和 OpenCL 后端。CLI 自行完成解码、带限重采样和多声道处理，运行时不需要 FFmpeg 或 Python。
 
 源码构建需要 **最新 Rust stable 工具链**。默认 features 会在构建时下载并准备固定 DFN3 模型，`cargo install` 也适用；应用 ZIP 附带同一模型和 CPU 运行库。`--model` 可省略：显式路径优先，否则先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时记录的模型源文件，不假定源码目录或当前工作目录。ORT 后端只接受下表三个输入和三个输出，均为 `f32`：
 
@@ -319,8 +361,9 @@ anr backends [--json]
 | `--output PATH` | 单输入的目标文件；`-` 表示 stdout。与 `--output-dir` 互斥。 |
 | `--output-dir DIR` | 逐个处理文件，按输入文件名去掉扩展名后生成 `.wav`，明确选择 raw 时生成 `.f32le`。同名结果不自动改名。 |
 | `--model PATH` | 可选的模型覆盖路径；省略时使用随程序或构建时准备的模型。显式路径无效时直接报错，不改用默认模型。 |
-| `--backend ort\|gl\|gles\|vk\|wgpu\|dx` | 默认 `ort`。各 Compute 后端需要对应 Cargo feature 和后文说明的固定模型。 |
-| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应 feature 和运行环境。任何 Compute 后端与显式 `--provider` 同用均为参数错误。 |
+| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | 默认 `ort`。各原生后端需要主动启用对应 Cargo feature，并使用后文说明的固定模型。 |
+| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应 feature 和运行环境。任何非 ORT 后端与显式 `--provider` 同用均为参数错误。 |
+| `--openvino-device CPU\|GPU\|GPU.n\|NPU` | 仅适用于 OpenVINO，省略时明确使用 `CPU`；`GPU.n` 指定 GPU 索引，例如 `GPU.0`。GPU/NPU 失败不切换 CPU。与其他后端同用为参数错误。 |
 | `--strength 80` | 默认 80；必须是 `0..=100` 的有限数值，拒绝 NaN、无穷和越界值，不静默修正。 |
 | `--input-format auto\|f32le` | 默认探测带头音频；raw 必须明确选 `f32le`。 |
 | `--input-rate HZ` / `--input-channels N` | raw 输入必填的正数；带头音频不能用它们覆盖真实规格。 |
@@ -400,16 +443,16 @@ cargo build -p anr-cli --no-default-features --features gles
 cargo build -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
 ```
 
-完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。CUDA/TensorRT、DirectML、CoreML、XNNPACK 等 flag 转发到 `anr`，需要对应平台、库和驱动；选择 feature 不会安装它们。
+完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。`ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack` 转发到 `anr` 的 ORT provider，需要对应平台、库和驱动；选择 feature 不会安装它们。这些 feature 与原生 `cuda`、`tensorrt` 不同。
 
 例如，在 Windows 编入 DirectML 后选择 `--provider directml`，在 macOS 编入 CoreML 后选择 `--provider coreml`。默认仍为 `cpu`。项目正常允许 ORT 在 CUDA、TensorRT、DirectML、CoreML 之外，将不支持或按自身分配规则更适合 CPU 的算子交给 CPU。这是默认策略，不是临时选项；选择 GPU provider 不代表所有算子都在 GPU 上执行。明确指定的 provider 注册或初始化失败仍报错，不会把不可用的 provider 静默换成 CPU。XNNPACK 本身是 CPU provider，也允许普通 CPU kernel 执行算子。`backends --json` 中，`compiled` 只表示编译时加入了支持；`runtime_available: null` 表示尚未检查运行时可用性，不代表模型成功运行。
 
-CUDA/TensorRT 会在创建各个 Session 前自动准备内存中的模型，与 benchmark 共用 `anr-ort` 加载入口。不需要额外参数、手动生成转换模型或安装 Python；原 ONNX 和权重不变，衰减量仍可调整。CPU、DirectML 及原生 Compute 保留原有加载方式。
+ORT 的 CUDA/TensorRT provider 会在创建各个 Session 前自动准备内存中的模型，与 benchmark 共用 `anr-ort` 加载入口。不需要额外参数、手动生成转换模型或安装 Python；原 ONNX 和权重不变，衰减量仍可调整。CPU、DirectML 及原生后端保留原有加载方式。
 
 
 动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
 
-可选 `gl`、`gles`、`vk`、`wgpu`、`dx` features 启用 Compute 后端，不会启用 ONNX Runtime。用 `--no-default-features` 去掉 ORT，再选择需要的 features。即使没有编入 ORT，`--backend` 默认值仍是 `ort`，因此 Compute-only 构建必须明确指定后端；不能传 `--provider`，包括 `--provider cpu`。
+可选 `gl`、`gles`、`vk`、`wgpu`、`dx`、`cuda`、`tensorrt`、`openvino`、`opencl` features 启用原生后端，不会启用 ONNX Runtime。用 `--no-default-features` 去掉 ORT，再选择环境支持的 features。即使没有编入 ORT，`--backend` 默认值仍是 `ort`，因此 native-only 构建必须明确指定后端；不能传 `--provider`，包括 `--provider cpu`。
 
 从源码运行 GLES-only 版本时，使用 Cargo 直接执行刚构建的程序，避免调用 `PATH` 中旧的 `anr`：
 
@@ -417,20 +460,61 @@ CUDA/TensorRT 会在创建各个 Session 前自动准备内存中的模型，与
 cargo run -p anr-cli --release --no-default-features --features gles -- denoise input.wav --model /path/to/dfn3.onnx --backend gles --output clean.wav
 ```
 
-五种后端都只将原 ONNX 用作参数容器，不执行通用 ONNX 图。固定模型 SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，即使端口大小一致，其他导出版本也会拒绝。通过 `anr-dfn3` 共用固定执行顺序和 WGSL 算子，FFT、神经网络及音频合成都在 GPU 执行；保留 48 kHz / 480 采样分帧、CLI 重采样、声道独立状态、strength、reset 和精确输出长度。强度为零保留原衰减分支，不表示原音旁路。
+GL/GLES/Vulkan/wgpu/D3D12 都只将原 ONNX 用作参数容器，不执行通用 ONNX 图。固定模型 SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，即使端口大小一致，其他导出版本也会拒绝。通过 `anr-dfn3` 共用固定执行顺序和 WGSL 算子，FFT、神经网络及音频合成都在 GPU 执行；保留 48 kHz / 480 采样分帧、CLI 重采样、声道独立状态、strength、reset 和精确输出长度。强度为零保留原衰减分支，不表示原音旁路。
 
 `gles` 需要 Windows/WGL 或 Linux 硬件 EGL/pbuffer 创建真实 ES 3.1+ context，复用 `anr-gl` 执行器，生成 GLSL ES 310；在 fence 完成后映射输出帧，不调用桌面专用 `glGetBufferSubData`，也不接受桌面 GL 的 ES 兼容模式。本后端未提供 Android、WebGL 或 macOS context 创建。
 
 `gl` 需要 Windows 桌面 GL 4.3 或 Linux 硬件 EGL 的桌面 GL 4.3/pbuffer；`vk` 需要 Windows/Linux 硬件 Vulkan 1.1；`wgpu` 在 Windows/Linux/macOS 使用原生硬件 Vulkan/DX12/Metal adapter；`dx` 使用 Windows 硬件 D3D12 与系统 D3DCompiler 47。原生 VK/DX 不经 wgpu，DX 不是 DirectML。不静默选择 CPU 或软件渲染；硬件不支持或初始化失败会报错。macOS GPU 路径尚未验证。
 
-Compute 后端不能传 `--provider`，包括 `--provider cpu`。`backends --json` 列出六个名称，但不创建 GPU device；Compute 项没有 ORT provider，`runtime_available` 保持 `null`。verbose 日志显示所选 backend，仅 ORT 显示 provider。
+原生后端不能传 `--provider`，包括 `--provider cpu`。`backends --json` 列出十个名称，但不加载运行库或创建 GPU device；原生项没有 ORT provider，`runtime_available` 保持 `null`，只表示没有探测可用性，不代表运行库或设备已就绪。verbose 日志显示所选 backend，仅 ORT 显示 provider。
 
 真实模型 CLI 测试需主动启用：将 `ANR_DFN3_MODEL` 指向模型，执行 `cargo test -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx --test cli compute_ -- --include-ignored`，按机器支持情况选择 features。测试覆盖 raw/WAV、立体声独立状态、非整帧长度、批处理重置和 strength。每个启用的 Compute 后端都需要真实硬件，不能把 ignored 当作硬件测试通过。
+
+### 原生 CUDA、TensorRT、OpenVINO 和 OpenCL 部署
+
+四种新增后端均需主动启用，并使用前述固定 SHA-256 模型，保留 CLI 重采样、声道独立状态、strength、reset、尾帧处理和精确输出长度。CUDA 和 OpenCL 在 GPU 执行完整固定 FP32 DSP/FFT/神经网络计划；CUDA 使用 Driver/NVRTC 与 replay graph，OpenCL 要求 OpenCL 1.2+ 硬件 GPU ICD，不接受 CPU 实现。TensorRT 使用两个真实 standard-layer 神经网络 engine 与 CUDA DSP/FFT graph，强类型 FP32、禁用 TF32，不经 ORT、ONNX parser 或推理 plugin。目前没有持久 engine cache；已记录的一次初始化为 17.342 秒，不能承诺快速冷启动。
+
+OpenVINO 通过原生 Runtime 直接导入原 ONNX，将循环状态转为 stateful，每条流使用独立 InferRequest。默认明确使用 CPU，不选 AUTO/HETERO。`--openvino-device GPU`、`GPU.0` 或 `NPU` 只请求对应设备；设备缺失、算子不支持均报错，不静默回退 CPU。NPU 运算精度取决于设备，不能因模型为 FP32 就宣称 NPU 全程 FP32。
+
+CUDA/OpenCL 的 Rust crate 不需要构建时 vendor SDK，但运行仍需兼容库与驱动。TensorRT/OpenVINO 构建需要现有 SDK 和 C++17 编译器，`build.rs` 编译私有 shared shim，Rust 通过 `libloading` 加载；不会系统安装或自动下载 SDK。
+
+```text
+cargo build -p anr-cli --release --no-default-features --features cuda,opencl
+cargo run -p anr-cli --release --no-default-features --features cuda -- denoise input.wav --model /path/to/dfn3.onnx --backend cuda --output clean.wav
+```
+
+启用 SDK 后端前，在构建环境配置真实 SDK 路径。PowerShell 示例（须替换路径）：
+
+```powershell
+$env:TENSORRT_ROOT = "C:\sdk\TensorRT"
+$env:CUDA_ROOT = "C:\sdk\CUDA"
+$env:OPENVINO_ROOT = "C:\sdk\openvino"
+cargo build -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl
+```
+
+TensorRT 需要 `TENSORRT_ROOT`、`CUDA_ROOT`（或 `CUDA_PATH`）下的 headers 和链接库，可用 `TENSORRT_LIB_DIR`、`CUDA_LIB_DIR` 覆盖链接库目录。OpenVINO 支持 `OPENVINO_ROOT` 或指向 SDK CMake 布局的 `OpenVINO_DIR`；官方 wheel 中含 `include/`、`libs/` 的 `openvino` 目录也可作为 SDK，Python 不是产品运行依赖。
+
+构建后分别使用 `--backend tensorrt`、`--backend opencl` 或 `--backend openvino --openvino-device CPU`。相对地，ORT CUDA 使用 `ort-cuda` feature 和 `--backend ort --provider cuda`；ORT TensorRT 使用 `ort-tensorrt` 和 `--backend ort --provider tensorrt`。原生后端不继承 ORT 的算子级 CPU 分配策略。
+
+自行分发应用时，除模型和通知外，还需部署以下依赖，不能依赖构建机器记录的绝对路径：
+
+| 后端 | 运行时部署要求 |
+| --- | --- |
+| CUDA | NVIDIA Driver API 12.0+，NVRTC major 12 或 13（优先 13），驱动还须能加载所选 NVRTC 产生的 PTX；仅支持 Driver API 12.0 不代表兼容 NVRTC 13 PTX。Windows 加载 `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`，Linux 加载 `libnvrtc.so.13` / `.12` / 无版本名库。将匹配的 NVRTC/builtins 库目录加入 Windows `PATH` 或 Linux `LD_LIBRARY_PATH`。 |
+| TensorRT | Cargo 构建 `OUT_DIR` 中的 `anr_tensorrt_native.dll`（Linux 为 `libanr_tensorrt_native.so`），以及兼容 TensorRT/CUDA 运行库、驱动。`ANR_TENSORRT_SHIM` 覆盖 shim **文件**；`ANR_TENSORRT_RUNTIME` 可设为 TensorRT DLL 目录或库文件。还需配置 vendor 库搜索路径，包括 NVRTC/builtins。 |
+| OpenVINO | `OUT_DIR` 中的 `anr_openvino_native.dll`（`libanr_openvino_native.so` / `.dylib`），以及匹配的 OpenVINO Runtime、ONNX frontend、所选设备 plugin 及其依赖。`ANR_OPENVINO_SHIM` 覆盖 shim **文件**；`ANR_OPENVINO_RUNTIME` 指向 Runtime 库**文件**，不是目录。保留 vendor runtime/plugin 布局并配置平台库搜索路径。 |
+| OpenCL | 系统 OpenCL ICD loader，以及支持 OpenCL 1.2+ 的厂商硬件 GPU ICD/runtime/driver。只有 loader 不等于拥有 GPU 实现。 |
+
+Windows 上，TensorRT loader 按 shim 实际导入的 DLL 名，默认依次搜索 shim 所在目录、executable 所在目录、`PATH` 中存在的绝对目录，最后查构建时 SDK 目录，各阶段去重。空/相对 `PATH` 项不会启用当前工作目录搜索。显式设置的 `ANR_TENSORRT_RUNTIME` 和 `CUDA_ROOT` / `CUDA_PATH` 始终优先，必须提供各自对应的运行库；覆盖路径无效会报错，不会改选其他目录或已安装版本。loader 不改写进程 `PATH`。
+
+shim 应放在 executable 旁或显式设置覆盖路径。只复制 `anr` 不足以部署这些依赖，Cargo 安装也不会自动收集私有 shim 或 vendor 库。再分发权限须按 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 中各厂商条款核实；项目许可不授予任意驱动/SDK 的再分发权。默认 Release ZIP 仍为 CPU ORT 包，不附带这些 SDK 或原生运行库。
+
+配置 SDK、运行库、硬件及 `ANR_DFN3_MODEL` 后，可执行 `cargo test -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl --test cli compute_ -- --include-ignored` 验收真实 CLI，features 只选本机可用项。已记录 Windows x64 验收退出 0，10 passed、0 ignored，覆盖 raw/WAV、立体声独立状态、精确尾帧长度、strength 与批处理 reset。CUDA/TensorRT/OpenCL 使用 RTX 2080 Ti，OpenVINO 明确使用 AMD Ryzen 7 5800X CPU；SDK/runtime 版本为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。四后端另已通过流式 reference。OpenVINO GPU 在原图 `NonZero_1_count` / `count_nonzero` kernel 选择处编译失败，NPU 未测；不能据此宣称 Linux/macOS GPU、其他设备、音质或实时性能已验证。
 
 
 ### 哪些已经测过
 
-CI 为 Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）和 macOS x64（`macos-15-intel`）配置 Rust stable 检查。工作流分别运行普通工作区测试、CPU ORT 真实模型测试、无后端和 Compute-only 非 GPU CLI 测试、lint/编译/文档检查及解压 ZIP 后的 CPU 推理；Compute 硬件测试仍需主动启用。这是配置说明，不是 hosted job 已通过的证据。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+CI 为 Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）和 macOS x64（`macos-15-intel`）配置 Rust stable 检查。SDK-free 工作区检查排除 `anr-tensorrt`、`anr-openvino`，使用明确 feature 组合，避免 `--all-features` 意外编入 SDK 后端。工作流覆盖普通测试、CPU ORT 真实模型测试、无后端和 native-only 非 GPU CLI 测试、lint/编译/文档检查及解压 ZIP 后的 CPU 推理；SDK 构建和原生硬件测试须在另行配置的环境验收。这是配置说明，不是 hosted job 已通过的证据。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
 自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
 
@@ -438,7 +522,7 @@ CI 为 Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS a
 
 | 环境 | 已执行的检查 | 不能据此确定的事项 |
 | --- | --- | --- |
-| Windows x64 / RTX 2080 Ti | ORT 真实模型；五种 Compute 后端的独立 61 帧数值基准；CLI raw/WAV、立体声独立状态、尾帧长度、strength 和批处理 reset。 | 其他 GPU 的行为、音质改善或实时性能。 |
+| Windows x64 / RTX 2080 Ti | ORT 真实模型；GL/GLES/Vulkan/wgpu/D3D12 的独立 61 帧数值基准；CLI raw/WAV、立体声独立状态、尾帧长度、strength 和批处理 reset。 | 其他 GPU 的行为、音质改善或实时性能。 |
 | WSL Ubuntu 24.04 x64 | ORT 推理与 CPU ZIP smoke；Compute-only 编译和非 GPU 测试，包含 GLES-only 测试及 Clippy。 | Linux GPU 执行，以及其他发行版/libc 的兼容性。 |
 | macOS arm64/x64 | 仅配置原生 runner 工作流。 | 本地原生运行、打包/签名或 GPU 结果。 |
 

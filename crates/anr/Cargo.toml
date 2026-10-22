@@ -19,6 +19,10 @@ anr-gles = { workspace = true, optional = true }
 anr-vk = { workspace = true, optional = true }
 anr-wgpu = { workspace = true, optional = true }
 anr-dx = { workspace = true, optional = true }
+anr-cuda = { workspace = true, optional = true }
+anr-tensorrt = { workspace = true, optional = true }
+anr-openvino = { workspace = true, optional = true }
+anr-opencl = { workspace = true, optional = true }
 
 [build-dependencies]
 sha2 = { version = "0.10.9", optional = true }
@@ -35,6 +39,10 @@ gles = ["dep:anr-gles"]
 vk = ["dep:anr-vk"]
 wgpu = ["dep:anr-wgpu"]
 dx = ["dep:anr-dx"]
+cuda = ["dep:anr-cuda"]
+tensorrt = ["dep:anr-tensorrt"]
+openvino = ["dep:anr-openvino"]
+opencl = ["dep:anr-opencl"]
 ort-download-binaries = ["anr-ort?/download-binaries"]
 ort-load-dynamic = ["ort", "anr-ort/load-dynamic"]
 ort-cuda = ["ort", "anr-ort/cuda"]

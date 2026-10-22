@@ -6,7 +6,11 @@ use anr::NoiseReduction;
     feature = "gles",
     feature = "vk",
     feature = "wgpu",
-    feature = "dx"
+    feature = "dx",
+    feature = "cuda",
+    feature = "tensorrt",
+    feature = "openvino",
+    feature = "opencl"
 ))]
 use anyhow::Context;
 use anyhow::{Result, bail};
@@ -43,12 +47,27 @@ enum BackendResources {
     Wgpu,
     #[cfg(feature = "dx")]
     Dx,
+    #[cfg(feature = "cuda")]
+    Cuda,
+    #[cfg(feature = "tensorrt")]
+    Tensorrt,
+    #[cfg(feature = "openvino")]
+    Openvino { device: anr::openvino::Device },
+    #[cfg(feature = "opencl")]
+    Opencl,
 }
 
 impl BackendResources {
-    fn new(backend: Backend, provider: Option<Provider>) -> Result<(Self, EngineSpec)> {
+    fn new(
+        backend: Backend,
+        provider: Option<Provider>,
+        openvino_device: Option<&str>,
+    ) -> Result<(Self, EngineSpec)> {
         if backend != Backend::Ort && provider.is_some() {
             bail!("--provider 只适用于 ORT 后端");
+        }
+        if backend != Backend::Openvino && openvino_device.is_some() {
+            bail!("--openvino-device 只适用于 OpenVINO 后端");
         }
         match backend {
             Backend::Ort => {
@@ -149,6 +168,66 @@ impl BackendResources {
                 #[cfg(not(feature = "dx"))]
                 bail!("此程序未启用 D3D12 后端；请以 dx feature 重新构建")
             }
+            Backend::Cuda => {
+                #[cfg(feature = "cuda")]
+                {
+                    Ok((
+                        Self::Cuda,
+                        EngineSpec {
+                            sample_rate: anr::cuda::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::cuda::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "cuda"))]
+                bail!("此程序未启用原生 CUDA 后端；请以 cuda feature 重新构建")
+            }
+            Backend::Tensorrt => {
+                #[cfg(feature = "tensorrt")]
+                {
+                    Ok((
+                        Self::Tensorrt,
+                        EngineSpec {
+                            sample_rate: anr::tensorrt::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::tensorrt::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "tensorrt"))]
+                bail!("此程序未启用原生 TensorRT 后端；请以 tensorrt feature 重新构建")
+            }
+            Backend::Openvino => {
+                #[cfg(feature = "openvino")]
+                {
+                    let device = openvino_device
+                        .unwrap_or("CPU")
+                        .parse()
+                        .context("OpenVINO 设备应为 CPU、GPU、GPU.0 或 NPU")?;
+                    Ok((
+                        Self::Openvino { device },
+                        EngineSpec {
+                            sample_rate: anr::openvino::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::openvino::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "openvino"))]
+                bail!("此程序未启用原生 OpenVINO 后端；请以 openvino feature 重新构建")
+            }
+            Backend::Opencl => {
+                #[cfg(feature = "opencl")]
+                {
+                    Ok((
+                        Self::Opencl,
+                        EngineSpec {
+                            sample_rate: anr::opencl::DFN3::SAMPLE_RATE,
+                            frame_samples: anr::opencl::DFN3::FRAME_SIZE,
+                        },
+                    ))
+                }
+                #[cfg(not(feature = "opencl"))]
+                bail!("此程序未启用原生 OpenCL 后端；请以 opencl feature 重新构建")
+            }
         }
     }
 
@@ -159,7 +238,11 @@ impl BackendResources {
             feature = "gles",
             feature = "vk",
             feature = "wgpu",
-            feature = "dx"
+            feature = "dx",
+            feature = "cuda",
+            feature = "tensorrt",
+            feature = "openvino",
+            feature = "opencl"
         ))]
         match self {
             #[cfg(feature = "ort")]
@@ -202,6 +285,36 @@ impl BackendResources {
                 reducer.set_factor(strength);
                 Ok(Box::new(reducer))
             }
+            #[cfg(feature = "cuda")]
+            Self::Cuda => {
+                let mut reducer = anr::cuda::DFN3::from_file(model)
+                    .with_context(|| format!("无法以原生 CUDA 加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "tensorrt")]
+            Self::Tensorrt => {
+                let mut reducer = anr::tensorrt::DFN3::from_file(model)
+                    .with_context(|| format!("无法以原生 TensorRT 加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "openvino")]
+            Self::Openvino { device } => {
+                let mut reducer = anr::openvino::DFN3::from_file_with_device(model, *device)
+                    .with_context(|| {
+                        format!("无法以 OpenVINO {device} 加载模型 {}", model.display())
+                    })?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
+            #[cfg(feature = "opencl")]
+            Self::Opencl => {
+                let mut reducer = anr::opencl::DFN3::from_file(model)
+                    .with_context(|| format!("无法以原生 OpenCL 加载模型 {}", model.display()))?;
+                reducer.set_factor(strength);
+                Ok(Box::new(reducer))
+            }
         }
         #[cfg(not(any(
             feature = "ort",
@@ -209,7 +322,11 @@ impl BackendResources {
             feature = "gles",
             feature = "vk",
             feature = "wgpu",
-            feature = "dx"
+            feature = "dx",
+            feature = "cuda",
+            feature = "tensorrt",
+            feature = "openvino",
+            feature = "opencl"
         )))]
         {
             let _ = (model, strength);
@@ -224,8 +341,9 @@ impl EnginePool {
         backend: Backend,
         provider: Option<Provider>,
         strength: f32,
+        openvino_device: Option<&str>,
     ) -> Result<Self> {
-        let (resources, spec) = BackendResources::new(backend, provider)?;
+        let (resources, spec) = BackendResources::new(backend, provider, openvino_device)?;
         let reducer = resources.load(model, strength)?;
         Ok(Self {
             model: model.to_owned(),
@@ -379,6 +497,30 @@ pub fn backends() -> Vec<BackendInfo> {
         BackendInfo {
             name: "dx",
             compiled: cfg!(feature = "dx"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "cuda",
+            compiled: cfg!(feature = "cuda"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "tensorrt",
+            compiled: cfg!(feature = "tensorrt"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "openvino",
+            compiled: cfg!(feature = "openvino"),
+            runtime_available: None,
+            providers: Vec::new(),
+        },
+        BackendInfo {
+            name: "opencl",
+            compiled: cfg!(feature = "opencl"),
             runtime_available: None,
             providers: Vec::new(),
         },

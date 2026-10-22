@@ -24,8 +24,14 @@ pub struct Model {
 impl Model {
     /// Validates the model identity and constructs the immutable GPU layout.
     pub fn load(path: &Path) -> Result<Self> {
+        Self::load_aligned(path, 1)
+    }
+
+    /// Aligns each scratch tensor to a power of two, up to 64 f32 elements
+    /// (256 bytes). The model's packed recurrent-state offsets stay unchanged.
+    pub fn load_aligned(path: &Path, alignment: u32) -> Result<Self> {
         let mut weights = Weights::load(path)?;
-        let mut arena = Arena::default();
+        let mut arena = Arena::new(alignment)?;
         let input = arena.alloc(FRAME_SIZE as u32);
         let output = arena.alloc(FRAME_SIZE as u32);
         let network = Network::build(&mut weights, &mut arena)?;

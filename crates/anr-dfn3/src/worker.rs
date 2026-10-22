@@ -1,16 +1,11 @@
-use crate::{FRAME_SIZE, Model, SAMPLE_RATE, STATE_SIZE, backend};
+use crate::{FRAME_SIZE, SAMPLE_RATE, STATE_SIZE, backend};
 use anr_core::{Error, NoiseReduction, Result};
-use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
 /// A worker-local native executor. It need not be Send: construction, frame
 /// execution and destruction all happen on the same private thread.
 pub trait Executor: 'static {
-    /// Uploads the model and initializes a hardware device.
-    fn new(model: Model) -> Result<Self>
-    where
-        Self: Sized;
     /// Processes exactly one frame, making its output CPU-readable on success.
     fn frame(
         &mut self,
@@ -49,16 +44,18 @@ impl Denoiser {
     pub const FRAME_SIZE: usize = FRAME_SIZE;
     /// Packed state values.
     pub const STATE_SIZE: usize = STATE_SIZE;
-    /// Validates model data before creating a worker-local native executor.
-    pub fn from_file<E: Executor>(path: impl AsRef<Path>) -> Result<Self> {
-        let model = Model::load(path.as_ref())?;
+    /// Initializes an executor on its private thread. Native handles never
+    /// cross threads; only the initialization data must be Send.
+    pub fn spawn<E: Executor>(
+        initialize: impl FnOnce() -> Result<E> + Send + 'static,
+    ) -> Result<Self> {
         let (requests, receive) = mpsc::sync_channel(1);
         let (reply, results) = mpsc::sync_channel(1);
         let (ready, initialized) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("anr-compute".into())
             .spawn(move || {
-                let mut gpu = match E::new(model) {
+                let mut gpu = match initialize() {
                     Ok(gpu) => gpu,
                     Err(error) => {
                         let _ = ready.send(Err(error));

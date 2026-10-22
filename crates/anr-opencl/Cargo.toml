@@ -1,0 +1,17 @@
+[package]
+name = "anr-opencl"
+description = "Model-specific DeepFilterNet3 inference with native OpenCL GPU compute"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/lona-cn/anr"
+readme = "../../README.md"
+include = ["src/**", "tests/dfn3.rs", "tests/fixtures/reference_*.f32le", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+anr-dfn3.workspace = true
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3.27"

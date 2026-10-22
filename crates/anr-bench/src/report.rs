@@ -76,8 +76,9 @@ impl Report<'_> {
         }
         writeln!(
             output,
-            "{:<13} {:>10} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10} {:>8} {:>7}",
+            "{:<13} {:<10} {:>10} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10} {:>8} {:>7}",
             "backend",
+            "device",
             "init(ms)",
             "min(ms)",
             "mean(ms)",
@@ -98,8 +99,9 @@ impl Report<'_> {
                     let stats = &measurement.statistics;
                     writeln!(
                         output,
-                        "{:<13} {:>10.1} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>10.1} {:>8.4} {:>7}",
+                        "{:<13} {:<10} {:>10.1} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>10.1} {:>8.4} {:>7}",
                         backend.name(),
+                        measurement.execution_device.as_deref().unwrap_or("-"),
                         measurement.initialization_ms,
                         stats.min_ms,
                         stats.mean_ms,

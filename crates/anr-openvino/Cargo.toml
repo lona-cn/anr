@@ -1,0 +1,20 @@
+[package]
+name = "anr-openvino"
+description = "Native OpenVINO Runtime DeepFilterNet3 streaming inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository = "https://github.com/lona-cn/anr"
+readme = "../../README.md"
+include = ["src/**", "native/**", "build.rs", "tests/dfn3.rs", "tests/fixtures/reference_*.f32le", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]
+anr-core.workspace = true
+anr-dfn3.workspace = true
+libloading = "0.8"
+
+[build-dependencies]
+cc = "1.2"
+
+[dev-dependencies]
+tempfile = "3.27"

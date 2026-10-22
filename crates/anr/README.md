@@ -4,7 +4,7 @@
 
 ## English
 
-`anr` provides a Rust interface to six DFN3 backends: ORT, OpenGL, GLES, Vulkan, wgpu, and D3D12. It processes **48 kHz, mono `f32` samples** with equally sized input and output. No backend is enabled by default. With `ort`, use `anr::DFN3`; with another backend, use its module, such as `anr::wgpu::DFN3`.
+`anr` provides a Rust interface to DFN3 backends: ORT, OpenGL, GLES, Vulkan, wgpu, D3D12, CUDA, TensorRT, OpenVINO, and OpenCL. It processes **48 kHz, mono `f32` samples** with equally sized input and output. No backend is enabled by default. With `ort`, use `anr::DFN3`; with another backend, use its module, such as `anr::cuda::DFN3`.
 
 The library does not read microphones, decode WAV, or resample audio. You'll need the **latest stable Rust toolchain**. Default features download and prepare the supported DFN3 model at build time.
 
@@ -18,6 +18,10 @@ The library does not read microphones, decode WAV, or resample audio. You'll nee
 | `vk` | Vulkan | `anr::vk::DFN3` |
 | `wgpu` | wgpu | `anr::wgpu::DFN3` |
 | `dx` | Direct3D 12 | `anr::dx::DFN3` |
+| `cuda` | Native CUDA Driver/NVRTC | `anr::cuda::DFN3` |
+| `tensorrt` | Native TensorRT + CUDA DSP/FFT | `anr::tensorrt::DFN3` |
+| `openvino` | Native OpenVINO Runtime, explicit CPU/GPU/NPU | `anr::openvino::DFN3`, `anr::openvino::Device` |
+| `opencl` | Native OpenCL 1.2 GPU | `anr::opencl::DFN3` |
 
 To build without ORT, set `default-features = false` and list the backend you need under `features`. For example:
 
@@ -26,7 +30,7 @@ To build without ORT, set `default-features = false` and list the backend you ne
 anr = { version = "0.1.1", default-features = false, features = ["wgpu"] }
 ```
 
-List the backends your program needs under `features`. Cargo includes all of them; your program must choose which one to use. The five non-ORT backends support only the project's specified DFN3 model, not arbitrary ONNX files. Hardware and system requirements are below.
+List the backends your program needs under `features`. Cargo includes all of them; your program must choose which one to use. The non-ORT backends support only the project's specified DFN3 model, not arbitrary ONNX files. Hardware and system requirements are below. Native `cuda` / `tensorrt` are independent implementations, not ORT's `ort-cuda` / `ort-tensorrt` providers.
 
 ### ORT quickstart
 
@@ -106,7 +110,7 @@ To select a different model, prepend its path before the input and output argume
 
 ### ORT model requirements
 
-For ORT, `DFN3::from_file(&environment, path)` loads a model file using an application-owned `Environment`; `DFN3::new(session)` uses a configured session. Both require exactly these three inputs and three outputs, all `f32`. Input order does not matter. `[]` is a scalar; `[1]` is a one-element vector. Compute constructors take only `path` and require the fixed model hash below.
+For ORT, `DFN3::from_file(&environment, path)` loads a model file using an application-owned `Environment`; `DFN3::new(session)` uses a configured session. Both require exactly these three inputs and three outputs, all `f32`. Input order does not matter. `[]` is a scalar; `[1]` is a one-element vector. Non-ORT `from_file` constructors take only `path` and require the fixed model hash below; OpenVINO also offers `from_file_with_device`.
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -125,6 +129,7 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 
 - `ort`: provides `DFN3`. With default features, downloads and copies CPU ONNX Runtime libraries at build time; requires network access and platform support.
 - `gl`, `gles`, `vk`, `wgpu`, `dx`: enable the corresponding compute backend and `anr::<backend>::DFN3`, without enabling ORT.
+- `cuda`, `tensorrt`, `openvino`, `opencl`: enable independent native backends and their `anr::<backend>::DFN3` modules, without ORT. TensorRT/OpenVINO require build-time C++ SDKs; enabling all features therefore requires those SDKs.
 - `ort-download-binaries`: the default, weak runtime-download option. It does not activate `anr-ort` by itself; automatic model preparation is independent of ORT.
 - `download-models`: enabled by default; downloads and caches the pinned DFN3 model unless `ANR_MODEL_PATH` supplies a local file.
 - `copy-models`: enabled by default; copies the selected model beside build outputs, independently of downloading.
@@ -170,7 +175,68 @@ fn main() -> Result<()> {
 
 `gl` requires desktop GL 4.3 on Windows/Linux; `vk` requires Windows/Linux hardware Vulkan 1.1; `wgpu` selects native hardware Vulkan/DX12/Metal on Windows/Linux/macOS; `dx` requires Windows hardware D3D12 and system D3DCompiler 47, without WARP, DirectML, or wgpu. Windows / RTX 2080 Ti has exercised all five; other platforms' GPU paths are not verified.
 
-The original external ONNX file supplies parameters only and must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. No model conversion, Python, or external shader compiler is required. Other exports and unsupported drivers fail explicitly. Strength zero preserves the model's attenuation branch; it is not an audio bypass.
+For these GL/GLES/Vulkan/wgpu/D3D12 shader backends, the original external ONNX file supplies parameters only and must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. No model conversion, Python, or external shader compiler is required. Other exports and unsupported drivers fail explicitly. Strength zero preserves the model's attenuation branch; it is not an audio bypass.
+
+### Native CUDA, TensorRT, OpenVINO, and OpenCL
+
+These backends validate the same fixed model hash and implement `NoiseReduction`, with one worker per stream and synchronous `run`. CUDA and OpenCL execute the complete fixed FP32 schedule, including FFT, normalization, recurrent inference, spectral filtering, and overlap-add; weights and state stay on GPU. CUDA uses the Driver API, NVRTC compilation, and replay graphs. OpenCL requires a hardware GPU ICD supporting OpenCL 1.2, with no CPU-device fallback. Neither requires a build-time SDK.
+
+TensorRT uses two real standard-layer neural-network engines plus CUDA DSP/FFT graphs, not ORT, an ONNX parser, or a monolithic inference plugin. It uses strongly typed FP32 with TF32 disabled. Initialization builds the engines; there is no persistent engine cache. The recorded initialization cost was 17.342 s, not a fast-cold-start guarantee.
+
+OpenVINO directly imports the original ONNX with its native frontend, rather than reading ONNX only as parameters. It uses `MakeStateful` (`ReadValue`/`Assign`) and one `InferRequest` per reducer; state remains inside the selected plugin, not a host round-trip every frame. `from_file` selects **CPU explicitly**, not as GPU fallback. CPU/GPU request accuracy-oriented FP32 inference; NPU hardware may use FP16 and is not verified against the FP32 tolerance.
+
+```toml
+anr = { version = "0.1.1", default-features = false, features = ["openvino"] }
+```
+
+```rust,no_run
+use anr::{openvino::{DFN3, Device}, NoiseReduction, Result};
+
+fn main() -> Result<()> {
+    let mut denoiser = DFN3::from_file_with_device("models/dfn3.onnx", Device::Cpu)?;
+    // Device::Gpu(0) and Device::Npu request exactly those plugins.
+    println!("execution device: {}", denoiser.execution_device());
+    let input = [0.0_f32; DFN3::FRAME_SIZE];
+    let mut output = [0.0_f32; DFN3::FRAME_SIZE];
+    denoiser.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
+    Ok(())
+}
+```
+
+`Device::Gpu(n)` selects `GPU.n`; the text parser also accepts `CPU`, `GPU` (= `GPU.0`), and `NPU`. AUTO/HETERO and fallback lists are not supported. Missing runtime/device or model-compilation failures return errors, never switch a requested GPU/NPU to CPU.
+
+#### SDKs and deployment
+
+TensorRT requires a C++ toolchain, TensorRT SDK (`TENSORRT_ROOT`), and CUDA SDK (`CUDA_ROOT` or `CUDA_PATH`). `TENSORRT_LIB_DIR` / `CUDA_LIB_DIR` override link-library directories. OpenVINO requires its C++ Runtime/ONNX frontend SDK through `OPENVINO_ROOT` or `OpenVINO_DIR` (CMake directory). The official wheel's `include/` and `libs/` are accepted; Python is not a product runtime dependency. No system-wide SDK installation is required.
+
+PowerShell examples below use conventional paths: replace them with your extracted SDK locations, then run Cargo from the workspace root:
+
+```powershell
+$env:TENSORRT_ROOT = 'C:\SDKs\TensorRT-10.16.1'
+$env:CUDA_ROOT = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3'
+$env:OPENVINO_ROOT = 'C:\SDKs\openvino'
+cargo build -p anr --release --no-default-features --features cuda,opencl
+cargo build -p anr --release --no-default-features --features tensorrt,openvino
+```
+
+CUDA needs an NVIDIA driver and discoverable NVRTC/builtins libraries (`PATH` on Windows or `LD_LIBRARY_PATH` on Linux); OpenCL needs a vendor GPU ICD. TensorRT/OpenVINO `build.rs` compile private shared C++ shims, loaded by Rust with `libloading`. Deploy `anr_tensorrt_native.dll` / `anr_openvino_native.dll` (Linux: `libanr_tensorrt_native.so` / `libanr_openvino_native.so`) beside your executable, plus the vendor runtimes, frontend/device plugins, and required notices. A build-tree path is not portable deployment. `ANR_TENSORRT_SHIM` / `ANR_OPENVINO_SHIM` select shim files; on Windows `ANR_TENSORRT_RUNTIME` selects a TensorRT DLL directory or file, while `ANR_OPENVINO_RUNTIME` selects the runtime library file. Standard loader paths must resolve their dependencies. Default application ZIPs remain CPU ORT and do not automatically bundle these SDKs/runtimes.
+
+Native `cuda` requires Driver API 12.0+ and NVRTC major 12 or 13, preferring 13 before 12. It checks required driver symbols and reports unsupported runtimes as ordinary errors. Windows loads `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`; Linux loads `libnvrtc.so.13` / `.12` / unversioned `libnvrtc.so`. The driver must support the selected NVRTC's PTX, and NVRTC must support the GPU architecture; NVRTC 13 is not guaranteed to work with arbitrary 12.x drivers. NVRTC's builtins dependencies must be on the loader path too.
+
+#### CLI, benchmark, and recorded validation
+
+Facade/CLI features are opt-in and do not change the CLI's ORT default. `--provider` is ORT-only; `--openvino-device CPU|GPU|GPU.n|NPU` is OpenVINO-only. With SDK/runtime paths set:
+
+```text
+cargo run -p anr-cli --release --no-default-features --features cuda -- denoise voice.wav --model models/dfn3.onnx --backend cuda --output clean.cuda.wav
+cargo run -p anr-cli --release --no-default-features --features openvino -- denoise voice.wav --model models/dfn3.onnx --backend openvino --openvino-device CPU --output clean.openvino.wav
+cargo run -p anr-bench --release -- --backend cuda,opencl --warmup 100 --frames 1000 --json
+cargo run -p anr-bench --release --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
+```
+
+`anr-bench` compiles CUDA/OpenCL into its default native build but still selects `gl,vk,dx` by default; TensorRT/OpenVINO require the named SDK features. All selections use the same input, warmup/state continuity, and timed-loop rules. JSON configuration includes `openvino_device`, successful OpenVINO results include `execution_device`, and native `cpu_fallback_allowed` is false **even for explicitly selected OpenVINO CPU**. It describes fallback policy, not GPU-only execution.
+
+Recorded Windows validation passed streaming references for all four backends and 10 real raw/WAV/stereo/batch CLI checks: CUDA/TensorRT/OpenCL on RTX 2080 Ti, OpenVINO CPU on AMD Ryzen 7 5800X; CUDA 13.3, TensorRT 10.16.1, OpenVINO 2026.4.0. All seven native benchmark selections completed 100 warmup and 1,000 measured frames each. OpenVINO GPU failed compiling the original graph's `NonZero_count` kernel; NPU was not tested. Cross-platform GPU and OpenVINO GPU/NPU success are not established. See the [root README](../../README.md#benchmark-native-compute-and-ort-gpu-inference) for full benchmark semantics and the separate ORT-provider path.
 
 ### License
 
@@ -180,7 +246,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 
 ## 简体中文
 
-`anr` 提供六种 DFN3 后端：ORT、OpenGL、GLES、Vulkan、wgpu 和 D3D12。它处理 **48 kHz、单声道 `f32` 采样**，输入输出等长。默认不启用任何后端。启用 `ort` 后可使用 `anr::DFN3`；启用其他后端后，从对应模块使用，例如 `anr::wgpu::DFN3`。
+`anr` 提供 DFN3 的 Rust 接口，后端包括 ORT、OpenGL、GLES、Vulkan、wgpu、D3D12、CUDA、TensorRT、OpenVINO 和 OpenCL。它处理 **48 kHz、单声道 `f32` 采样**，输入输出等长。默认不启用任何后端。启用 `ort` 后可使用 `anr::DFN3`；启用其他后端后，从对应模块使用，例如 `anr::cuda::DFN3`。
 
 它不读取麦克风、不解码 WAV，也不转换采样率。需要 **最新 Rust stable 工具链**；默认 features 会在构建时下载并准备受支持的 DFN3 模型。
 
@@ -202,7 +268,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 anr = { version = "0.1.1", default-features = false, features = ["wgpu"] }
 ```
 
-在 `features` 中填写要用的后端。写多个就会同时编入多个，程序需要自行决定使用哪一个；它不会自动切换。五种非 ORT 后端只支持本项目指定的 DFN3 模型，不能拿来运行任意 ONNX 文件。硬件和系统要求见下文。
+在 `features` 中填写要用的后端。写多个就会同时编入多个，程序需要自行决定使用哪一个；它不会自动切换。非 ORT 后端只支持本项目指定的 DFN3 模型，不能拿来运行任意 ONNX 文件。硬件和系统要求见下文。原生 `cuda` / `tensorrt` 是独立实现，与 ORT 的 `ort-cuda` / `ort-tensorrt` provider 不同。
 
 ### ORT 入门
 
@@ -212,6 +278,10 @@ anr = { version = "0.1.1", features = ["ort"] }
 ```
 
 依赖示例使用 `0.1.1`。使用本地源码时，可以把版本依赖改成指向对应 crate 目录的 `path` 依赖。
+| `cuda` | 原生 CUDA Driver/NVRTC | `anr::cuda::DFN3` |
+| `tensorrt` | 原生 TensorRT + CUDA DSP/FFT | `anr::tensorrt::DFN3` |
+| `openvino` | 原生 OpenVINO Runtime，明确选择 CPU/GPU/NPU | `anr::openvino::DFN3`、`anr::openvino::Device` |
+| `opencl` | 原生 OpenCL 1.2 GPU | `anr::opencl::DFN3` |
 
 ```rust,no_run
 use anr::{DFN3, NoiseReduction, Result};
@@ -282,7 +352,7 @@ cargo run -p anr --features ort --example denoise -- <input.f32le> <output.f32le
 
 ### ORT 模型要求
 
-ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment` 加载模型，`DFN3::new(session)` 使用已配置的 session。两种方式都只接受下表的三个输入和三个输出，类型为 `f32`，输入排列不限。`[]` 是单个数，`[1]` 是单元素的一维数组。Compute 构造器只传 `path`，并要求后文指定的固定模型摘要。
+ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment` 加载模型，`DFN3::new(session)` 使用已配置的 session。两种方式都只接受下表的三个输入和三个输出，类型为 `f32`，输入排列不限。`[]` 是单个数，`[1]` 是单元素的一维数组。非 ORT 的 `from_file` 构造器只传 `path`，并要求后文指定的固定模型摘要；OpenVINO 另提供 `from_file_with_device`。
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -301,6 +371,7 @@ ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment
 
 - `ort`：提供 `DFN3`；保留默认 features 时，在构建中下载并复制 CPU 运行库，需要网络和平台支持。
 - `gl`、`gles`、`vk`、`wgpu`、`dx`：启用对应 Compute 后端和 `anr::<backend>::DFN3`，不会启用 ORT。
+- `cuda`、`tensorrt`、`openvino`、`opencl`：启用独立原生后端和对应 `anr::<backend>::DFN3` 模块，不启用 ORT。TensorRT/OpenVINO 构建需要 C++ SDK，因此启用全部 features 也需要这些 SDK。
 - `ort-download-binaries`：默认启用的弱运行库下载选项，不会单独激活 `anr-ort`；自动模型准备与 ORT 无关。
 - `download-models`：默认启用，下载并缓存固定 DFN3 模型；设置 `ANR_MODEL_PATH` 时改用本地文件。
 - `copy-models`：默认启用，将选中的模型复制到构建产物旁，与下载独立控制。
@@ -346,7 +417,68 @@ fn main() -> Result<()> {
 
 `gl` 需 Windows/Linux 桌面 GL 4.3；`vk` 需 Windows/Linux 硬件 Vulkan 1.1；`wgpu` 在 Windows/Linux/macOS 选择原生硬件 Vulkan/DX12/Metal；`dx` 需 Windows 硬件 D3D12 与系统 D3DCompiler 47，不使用 WARP、DirectML 或 wgpu。五种均已在 Windows / RTX 2080 Ti 实跑，其他平台的 GPU 路径未验证。
 
-原始外置 ONNX 只提供参数，要求 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。无需模型转换、Python 或外部 shader 编译器。其他模型或不支持的驱动明确报错。强度为零保留原模型的衰减分支，不表示原音旁路。
+对于上述 GL/GLES/Vulkan/wgpu/D3D12 shader 后端，原始外置 ONNX 只提供参数，要求 SHA-256 为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。无需模型转换、Python 或外部 shader 编译器。其他模型或不支持的驱动明确报错。强度为零保留原模型的衰减分支，不表示原音旁路。
+
+### 原生 CUDA、TensorRT、OpenVINO 和 OpenCL
+
+这些后端校验同一固定模型摘要，实现 `NoiseReduction`，每路流持有一个工作线程，`run` 同步等待结果。CUDA 与 OpenCL 使用固定 FP32 调度执行包括 FFT、归一化、循环网络、频谱滤波和 overlap-add 的完整流程，权重与状态常驻 GPU。CUDA 使用 Driver API、NVRTC 编译和 replay graph；OpenCL 需要支持 1.2 的硬件 GPU ICD，不会退回 CPU device。两者均不要求构建时 SDK。
+
+TensorRT 使用两个真正的标准层神经网络 engine 加上 CUDA DSP/FFT graph，不是 ORT、ONNX parser 或单体推理 plugin。采用强类型 FP32，禁用 TF32；初始化时构建 engines，没有持久 engine cache。已记录的一次初始化耗时为 17.342 秒，不代表快速冷启动。
+
+OpenVINO 使用原生 frontend 直接导入原 ONNX，而不是只从 ONNX 读取参数。它使用 `MakeStateful`（`ReadValue`/`Assign`），每个降噪器独占一个 `InferRequest`，状态保留在所选 plugin 内，不逐帧往返主机。`from_file` 默认**明确选择 CPU**，不是 GPU fallback。CPU/GPU 请求偏重精度的 FP32 推理；NPU 硬件可能使用 FP16，尚未验证满足 FP32 reference 阈值。
+
+```toml
+anr = { version = "0.1.1", default-features = false, features = ["openvino"] }
+```
+
+```rust,no_run
+use anr::{openvino::{DFN3, Device}, NoiseReduction, Result};
+
+fn main() -> Result<()> {
+    let mut denoiser = DFN3::from_file_with_device("models/dfn3.onnx", Device::Cpu)?;
+    // Device::Gpu(0) 和 Device::Npu 只请求对应 plugin。
+    println!("execution device: {}", denoiser.execution_device());
+    let input = [0.0_f32; DFN3::FRAME_SIZE];
+    let mut output = [0.0_f32; DFN3::FRAME_SIZE];
+    denoiser.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
+    Ok(())
+}
+```
+
+`Device::Gpu(n)` 选择 `GPU.n`；文本解析也接受 `CPU`、`GPU`（即 `GPU.0`）、`NPU`，不支持 AUTO/HETERO 或 fallback 列表。运行库或设备缺失、模型编译失败均报错，不会将请求的 GPU/NPU 换成 CPU。
+
+#### SDK 与部署
+
+TensorRT 需要 C++ 工具链、TensorRT SDK（`TENSORRT_ROOT`）及 CUDA SDK（`CUDA_ROOT` 或 `CUDA_PATH`）；可用 `TENSORRT_LIB_DIR` / `CUDA_LIB_DIR` 覆盖链接库目录。OpenVINO 需要包含 Runtime/ONNX frontend 的 C++ SDK，通过 `OPENVINO_ROOT` 或指向 CMake 目录的 `OpenVINO_DIR` 配置。官方 wheel 的 `include/`、`libs/` 布局也可使用；Python 不是产品运行依赖，无需系统级安装 SDK。
+
+以下 PowerShell 示例使用常规路径，请替换为自己的 SDK 解压目录，再从工作区根目录执行 Cargo：
+
+```powershell
+$env:TENSORRT_ROOT = 'C:\SDKs\TensorRT-10.16.1'
+$env:CUDA_ROOT = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3'
+$env:OPENVINO_ROOT = 'C:\SDKs\openvino'
+cargo build -p anr --release --no-default-features --features cuda,opencl
+cargo build -p anr --release --no-default-features --features tensorrt,openvino
+```
+
+CUDA 需要 NVIDIA 驱动，并让加载器找到 NVRTC/builtins 库（Windows `PATH`、Linux `LD_LIBRARY_PATH`）；OpenCL 需要厂商 GPU ICD。TensorRT/OpenVINO 的 `build.rs` 编译私有共享 C++ shim，由 Rust 通过 `libloading` 加载。分发时将 `anr_tensorrt_native.dll` / `anr_openvino_native.dll`（Linux 为 `libanr_tensorrt_native.so` / `libanr_openvino_native.so`）放在可执行文件旁，并携带厂商 runtime、frontend/设备 plugin 及必要许可说明；构建目录路径不能替代可移植部署。`ANR_TENSORRT_SHIM` / `ANR_OPENVINO_SHIM` 指向 shim 文件；Windows 上 `ANR_TENSORRT_RUNTIME` 可指向 TensorRT DLL 目录或文件，`ANR_OPENVINO_RUNTIME` 则指向 runtime 库文件。标准加载路径也必须能解析依赖。默认应用 ZIP 仍是 CPU ORT，不会自动打包这些 SDK/运行库。
+
+原生 `cuda` 要求 Driver API 12.0+ 和 major 12 或 13 的 NVRTC，优先加载 13、其次 12。它预检所需 driver 符号，不支持的运行库正常返回错误。Windows 加载 `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`，Linux 加载 `libnvrtc.so.13` / `.12` / 无版本号的 `libnvrtc.so`。驱动必须支持所选 NVRTC 的 PTX，NVRTC 也须支持 GPU 架构；不保证 NVRTC 13 可搭配任意 12.x 驱动。NVRTC 的 builtins 依赖同样须位于加载路径。
+
+#### CLI、benchmark 和实测范围
+
+facade/CLI 的新后端均显式选择，不改变 CLI 默认 ORT。`--provider` 仅用于 ORT；`--openvino-device CPU|GPU|GPU.n|NPU` 仅用于 OpenVINO。配置好 SDK/运行库路径后：
+
+```text
+cargo run -p anr-cli --release --no-default-features --features cuda -- denoise voice.wav --model models/dfn3.onnx --backend cuda --output clean.cuda.wav
+cargo run -p anr-cli --release --no-default-features --features openvino -- denoise voice.wav --model models/dfn3.onnx --backend openvino --openvino-device CPU --output clean.openvino.wav
+cargo run -p anr-bench --release -- --backend cuda,opencl --warmup 100 --frames 1000 --json
+cargo run -p anr-bench --release --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
+```
+
+`anr-bench` 默认原生构建已编入 CUDA/OpenCL，但默认选择仍为 `gl,vk,dx`；TensorRT/OpenVINO 需要同名 SDK features。各后端使用相同输入、预热/状态连续性及计时循环规则。JSON 配置含 `openvino_device`，OpenVINO 成功结果含 `execution_device`；原生后端的 `cpu_fallback_allowed` 均为 false，**明确选择 OpenVINO CPU 也如此**。它表示 fallback 策略，不代表仅在 GPU 执行。
+
+已有 Windows 实测：四后端连续帧 reference 和共 10 项真实 raw/WAV、立体声、批处理 CLI 检查通过；CUDA/TensorRT/OpenCL 在 RTX 2080 Ti，OpenVINO CPU 在 AMD Ryzen 7 5800X，SDK 为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。七个原生 benchmark 后端均完成各 100 帧预热、1000 帧正式测量。OpenVINO GPU 编译因原图 `NonZero_count` kernel 选择失败；NPU 未测。不能据此声称跨平台 GPU 或 OpenVINO GPU/NPU 验证通过。完整 benchmark 规则及独立的 ORT provider 路径见[根 README](../../README.md#测试原生-compute-和-ort-gpu-推理性能)。
 
 ### 许可
 

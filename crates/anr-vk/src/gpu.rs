@@ -45,8 +45,8 @@ pub(crate) struct Gpu {
     context: Context,
 }
 
-impl Executor for Gpu {
-    fn new(model: Model) -> Result<Self> {
+impl Gpu {
+    pub(crate) fn new(model: Model) -> Result<Self> {
         let context = Context::new(&model)?;
         let alignment = context.limits.min_uniform_buffer_offset_alignment.max(1);
         let stride = u64::from(PARAMETER_BYTES)
@@ -261,7 +261,8 @@ impl Executor for Gpu {
         }
         Ok(gpu)
     }
-
+}
+impl Executor for Gpu {
     fn frame(
         &mut self,
         input: &[f32; FRAME_SIZE],

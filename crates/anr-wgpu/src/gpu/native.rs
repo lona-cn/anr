@@ -46,8 +46,8 @@ pub(crate) struct Gpu {
     completed: mpsc::Receiver<std::result::Result<(), wgpu::BufferAsyncError>>,
 }
 
-impl Executor for Gpu {
-    fn new(mut model: Model) -> Result<Self> {
+impl Gpu {
+    pub(crate) fn new(mut model: Model) -> Result<Self> {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::DX12 | wgpu::Backends::METAL;
         let instance = wgpu::Instance::new(descriptor);
@@ -245,7 +245,9 @@ impl Executor for Gpu {
             completed,
         })
     }
+}
 
+impl Executor for Gpu {
     fn frame(
         &mut self,
         input: &[f32; FRAME_SIZE],

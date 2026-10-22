@@ -73,6 +73,12 @@ pub struct DenoiseArgs {
     pub backend: Backend,
     #[arg(long, value_enum, help = "仅适用于 ORT 后端；省略时 ORT 默认 cpu")]
     pub provider: Option<Provider>,
+    #[arg(
+        long,
+        value_name = "DEVICE",
+        help = "仅适用于 OpenVINO：CPU、GPU、GPU.0 或 NPU；省略时使用 CPU"
+    )]
+    pub openvino_device: Option<String>,
     #[arg(long, default_value_t = 80.0, value_parser = strength, allow_hyphen_values = true)]
     pub strength: f32,
     #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
@@ -115,6 +121,10 @@ pub enum Backend {
     Vk,
     Wgpu,
     Dx,
+    Cuda,
+    Tensorrt,
+    Openvino,
+    Opencl,
 }
 
 impl Backend {
@@ -126,6 +136,10 @@ impl Backend {
             Self::Vk => "vk",
             Self::Wgpu => "wgpu",
             Self::Dx => "dx",
+            Self::Cuda => "cuda",
+            Self::Tensorrt => "tensorrt",
+            Self::Openvino => "openvino",
+            Self::Opencl => "opencl",
         }
     }
 }
@@ -177,6 +191,9 @@ impl DenoiseArgs {
         let invalid = |message| clap::Error::raw(ErrorKind::ArgumentConflict, message);
         if self.backend != Backend::Ort && self.provider.is_some() {
             return Err(invalid("--provider 只适用于 ORT 后端。"));
+        }
+        if self.backend != Backend::Openvino && self.openvino_device.is_some() {
+            return Err(invalid("--openvino-device 只适用于 OpenVINO 后端。"));
         }
         let stdin = self.inputs.iter().any(|p| p == Path::new("-"));
         if self.inputs.len() > 1 && self.output.is_some() {

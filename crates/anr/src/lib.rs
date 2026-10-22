@@ -2,7 +2,7 @@
 //!
 //! No inference backend is enabled by default. The default `download-models` and
 //! `copy-models` features prepare DFN3 for [`default_model_path`].
-//! Enable `ort` for `DFN3`, or `gl`, `gles`, `vk`, `wgpu`, or `dx` for a native backend.
+//! Enable `ort` for `DFN3`, or select a compute backend with its matching feature.
 
 pub use anr_core::{Error, NoiseReduction, Result};
 
@@ -47,4 +47,28 @@ pub mod wgpu {
 #[cfg(feature = "dx")]
 pub mod dx {
     pub use anr_dx::DFN3;
+}
+
+/// Native CUDA compute for the supported DFN3 model, without ONNX Runtime.
+#[cfg(feature = "cuda")]
+pub mod cuda {
+    pub use anr_cuda::DFN3;
+}
+
+/// Native TensorRT neural inference with CUDA audio DSP, without ONNX Runtime.
+#[cfg(feature = "tensorrt")]
+pub mod tensorrt {
+    pub use anr_tensorrt::DFN3;
+}
+
+/// Native OpenVINO inference with explicitly selected devices.
+#[cfg(feature = "openvino")]
+pub mod openvino {
+    pub use anr_openvino::{DFN3, Device};
+}
+
+/// Native OpenCL hardware-GPU compute, without ONNX Runtime.
+#[cfg(feature = "opencl")]
+pub mod opencl {
+    pub use anr_opencl::DFN3;
 }

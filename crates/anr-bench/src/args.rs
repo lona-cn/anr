@@ -26,6 +26,13 @@ pub struct Args {
     pub backends: Vec<Backend>,
     #[arg(
         long,
+        value_name = "DEVICE",
+        default_value = "CPU",
+        help = "OpenVINO 使用的明确设备：CPU、GPU、GPU.0 或 NPU"
+    )]
+    pub openvino_device: String,
+    #[arg(
+        long,
         default_value_t = 100,
         help = "每个后端的预热帧数，不计入统计；允许为 0"
     )]
@@ -45,6 +52,10 @@ pub enum Backend {
     Gl,
     Vk,
     Dx,
+    Cuda,
+    Tensorrt,
+    Openvino,
+    Opencl,
     OrtCuda,
     OrtTensorrt,
     OrtDirectml,
@@ -56,6 +67,10 @@ impl Backend {
             Self::Gl => "gl",
             Self::Vk => "vk",
             Self::Dx => "dx",
+            Self::Cuda => "cuda",
+            Self::Tensorrt => "tensorrt",
+            Self::Openvino => "openvino",
+            Self::Opencl => "opencl",
             Self::OrtCuda => "ort-cuda",
             Self::OrtTensorrt => "ort-tensorrt",
             Self::OrtDirectml => "ort-directml",

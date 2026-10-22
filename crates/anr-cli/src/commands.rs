@@ -163,7 +163,13 @@ fn denoise(
     let (jobs, mut destinations) = plan_jobs(args, model)?;
     cancel::check(&cancelled)?;
     // Initialize once before creating any output directory or transaction.
-    let mut engines = EnginePool::new(model, args.backend, args.provider, args.strength)?;
+    let mut engines = EnginePool::new(
+        model,
+        args.backend,
+        args.provider,
+        args.strength,
+        args.openvino_device.as_deref(),
+    )?;
     if let Some(dir) = &args.output_dir {
         fs::create_dir_all(dir).with_context(|| format!("无法创建输出目录 {}", dir.display()))?;
         // Creating a previously missing parent can resolve `..` or aliases

@@ -12,12 +12,14 @@ mod gpu {
     use anr_dfn3::{Executor, FRAME_SIZE, Model, backend};
 
     pub(crate) struct Gpu;
-    impl Executor for Gpu {
-        fn new(_: Model) -> Result<Self> {
+    impl Gpu {
+        pub(crate) fn new(_: Model) -> Result<Self> {
             Err(backend(
                 "native Vulkan DFN3 is supported only on Windows and Linux",
             ))
         }
+    }
+    impl Executor for Gpu {
         fn frame(
             &mut self,
             _: &[f32; FRAME_SIZE],
@@ -33,7 +35,7 @@ mod gpu {
 }
 
 use anr_core::{NoiseReduction, Result};
-use anr_dfn3::Denoiser;
+use anr_dfn3::{Denoiser, Model};
 use std::path::Path;
 
 /// One continuous 48 kHz mono stream with hardware Vulkan compute inference.
@@ -58,8 +60,9 @@ impl DFN3 {
 
     /// Validates the supported model before opening a hardware Vulkan device.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let model = Model::load(path.as_ref())?;
         Ok(Self {
-            inner: Denoiser::from_file::<gpu::Gpu>(path)?,
+            inner: Denoiser::spawn(move || gpu::Gpu::new(model))?,
         })
     }
 }

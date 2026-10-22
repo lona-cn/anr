@@ -5,7 +5,7 @@ mod context;
 mod gpu;
 
 use anr_core::{NoiseReduction, Result};
-use anr_dfn3::Denoiser;
+use anr_dfn3::{Denoiser, Model};
 pub(crate) use anr_dfn3::{FRAME_SIZE, STATE_SIZE, backend};
 use std::path::Path;
 
@@ -39,9 +39,10 @@ impl DFN3 {
     /// Initializes the requested native API on Windows/WGL or hardware Linux/EGL.
     /// GLES requires a real ES 3.1 context; neither API nor software fallbacks are used.
     pub fn from_file_with_api(path: impl AsRef<Path>, api: GlApi) -> Result<Self> {
+        let model = Model::load(path.as_ref())?;
         let inner = match api {
-            GlApi::Desktop => Denoiser::from_file::<gpu::Gpu<false>>(path)?,
-            GlApi::Gles => Denoiser::from_file::<gpu::Gpu<true>>(path)?,
+            GlApi::Desktop => Denoiser::spawn(move || gpu::Gpu::<false>::new(model))?,
+            GlApi::Gles => Denoiser::spawn(move || gpu::Gpu::<true>::new(model))?,
         };
         Ok(Self { inner })
     }

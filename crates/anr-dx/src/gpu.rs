@@ -707,8 +707,8 @@ impl Gpu {
     }
 }
 
-impl Executor for Gpu {
-    fn new(model: Model) -> Result<Self> {
+impl Gpu {
+    pub(crate) fn new(model: Model) -> Result<Self> {
         let context = Context::new()?;
         let device = &context.device;
         let root = root_signature(device)?;
@@ -765,6 +765,8 @@ impl Executor for Gpu {
         gpu.initialize()?;
         Ok(gpu)
     }
+}
+impl Executor for Gpu {
     fn frame(
         &mut self,
         input: &[f32; FRAME_SIZE],

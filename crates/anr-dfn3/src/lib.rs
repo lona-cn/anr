@@ -10,6 +10,7 @@ mod weights;
 mod worker;
 
 pub use model::Model;
+pub use weights::model_bytes;
 pub use worker::{Denoiser, Executor};
 
 /// Required mono sample rate.

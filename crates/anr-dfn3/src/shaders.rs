@@ -13,6 +13,11 @@ pub fn wgsl(kind: ShaderKind) -> &'static str {
     }
 }
 
+/// Native CUDA kernels shared by the CUDA and TensorRT executors.
+pub fn cuda() -> &'static str {
+    include_str!("shaders/cuda.cu")
+}
+
 #[cfg(any(feature = "glsl", feature = "spirv", feature = "hlsl"))]
 fn validated(kind: ShaderKind) -> Result<(naga::Module, naga::valid::ModuleInfo)> {
     let source = wgsl(kind);

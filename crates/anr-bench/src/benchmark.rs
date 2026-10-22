@@ -15,6 +15,8 @@ pub struct Measurement {
     pub initialization_ms: f64,
     pub effective_strength: f32,
     pub cpu_fallback_allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_device: Option<String>,
     #[serde(flatten)]
     pub statistics: Statistics,
 }
@@ -36,6 +38,43 @@ impl Benchmark {
             Backend::Gl => measure(args, input, false, || anr_gl::DFN3::from_file(&args.model)),
             Backend::Vk => measure(args, input, false, || anr_vk::DFN3::from_file(&args.model)),
             Backend::Dx => measure(args, input, false, || anr_dx::DFN3::from_file(&args.model)),
+            Backend::Cuda => measure(args, input, false, || {
+                anr_cuda::DFN3::from_file(&args.model)
+            }),
+            Backend::Opencl => measure(args, input, false, || {
+                anr_opencl::DFN3::from_file(&args.model)
+            }),
+            Backend::Tensorrt => {
+                #[cfg(feature = "tensorrt")]
+                {
+                    measure(args, input, false, || {
+                        anr_tensorrt::DFN3::from_file(&args.model)
+                    })
+                }
+                #[cfg(not(feature = "tensorrt"))]
+                anyhow::bail!(
+                    "原生 TensorRT 后端未编译；请启用 tensorrt feature 并提供 TensorRT/CUDA SDK"
+                )
+            }
+            Backend::Openvino => {
+                #[cfg(feature = "openvino")]
+                {
+                    let device = args
+                        .openvino_device
+                        .parse()
+                        .context("OpenVINO 设备应为 CPU、GPU、GPU.0 或 NPU")?;
+                    measure_with_device(args, input, false, || {
+                        let denoiser =
+                            anr_openvino::DFN3::from_file_with_device(&args.model, device)?;
+                        let execution_device = Some(denoiser.execution_device().to_owned());
+                        Ok((denoiser, execution_device))
+                    })
+                }
+                #[cfg(not(feature = "openvino"))]
+                anyhow::bail!(
+                    "原生 OpenVINO 后端未编译；请启用 openvino feature 并提供 OpenVINO SDK"
+                )
+            }
             Backend::OrtCuda | Backend::OrtTensorrt | Backend::OrtDirectml => {
                 #[cfg(feature = "ort")]
                 {
@@ -61,8 +100,17 @@ fn measure<D: NoiseReduction>(
     cpu_fallback_allowed: bool,
     load: impl FnOnce() -> anr_core::Result<D>,
 ) -> Result<Measurement> {
+    measure_with_device(args, input, cpu_fallback_allowed, || Ok((load()?, None)))
+}
+
+fn measure_with_device<D: NoiseReduction>(
+    args: &Args,
+    input: &[[f32; FRAME_SIZE]],
+    cpu_fallback_allowed: bool,
+    load: impl FnOnce() -> anr_core::Result<(D, Option<String>)>,
+) -> Result<Measurement> {
     let started = Instant::now();
-    let mut denoiser = load().context("加载模型或初始化 GPU 失败")?;
+    let (mut denoiser, execution_device) = load().context("加载模型或初始化推理设备失败")?;
     let initialization_ms = started.elapsed().as_secs_f64() * 1_000.0;
     denoiser.set_factor(args.strength);
     let effective_strength = denoiser.factor();
@@ -91,6 +139,7 @@ fn measure<D: NoiseReduction>(
         initialization_ms,
         effective_strength,
         cpu_fallback_allowed,
+        execution_device,
         statistics: Statistics::calculate(&mut latencies, elapsed),
     })
 }

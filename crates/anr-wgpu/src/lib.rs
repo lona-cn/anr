@@ -7,7 +7,7 @@
 mod gpu;
 
 use anr_core::{NoiseReduction, Result};
-use anr_dfn3::Denoiser;
+use anr_dfn3::{Denoiser, Model};
 use std::path::Path;
 
 /// One continuous 48 kHz mono DFN3 stream on a native hardware adapter.
@@ -32,8 +32,9 @@ impl DFN3 {
     /// Supported native platforms are Windows, Linux, and macOS. A hardware
     /// Vulkan, Direct3D 12, or Metal adapter is required; no surface is created.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let model = Model::load(path.as_ref())?;
         Ok(Self {
-            inner: Denoiser::from_file::<gpu::Gpu>(path)?,
+            inner: Denoiser::spawn(move || gpu::Gpu::new(model))?,
         })
     }
 }

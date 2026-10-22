@@ -136,23 +136,23 @@ jobs:
           cache-directories: ${{ runner.temp }}/ort-cache
       - name: Build actual native CLI with CPU backend
         run: cargo build --locked -p anr-cli
-      - name: Run workspace and native CLI process tests
-        run: cargo test --locked --workspace --all-targets
+      - name: Run SDK-free workspace and native CLI process tests
+        run: cargo test --locked --workspace --exclude anr-tensorrt --exclude anr-openvino --all-targets
       - name: Run CPU DFN3 real-model test
         run: cargo test --locked -p anr-ort --test dfn3 -- --ignored
       - name: Run CLI without inference backend
         run: cargo test --locked -p anr-cli --no-default-features
       - name: Run compute CLI tests without requiring GPU hardware
-        run: cargo test --locked -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
+        run: cargo test --locked -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl
       - name: Formatting and lint gate
         run: |
           cargo fmt --all -- --check
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo check --locked --workspace --all-targets --all-features
+          cargo clippy --locked --workspace --exclude anr-tensorrt --exclude anr-openvino --all-targets -- -D warnings
+          cargo check --locked --workspace --exclude anr-tensorrt --exclude anr-openvino --all-targets --features "anr-cli/gl,anr-cli/gles,anr-cli/vk,anr-cli/wgpu,anr-cli/dx,anr-cli/cuda,anr-cli/opencl,anr-cli/ort-load-dynamic,anr-cli/ort-cuda,anr-cli/ort-tensorrt,anr-cli/ort-directml,anr-cli/ort-coreml,anr-cli/ort-xnnpack,anr-bench/ort-load-dynamic,anr-bench/ort-cuda,anr-bench/ort-tensorrt,anr-bench/ort-directml,anr-lite/wgpu"
       - name: Build workspace documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --workspace --no-deps
+        run: cargo doc --locked --workspace --exclude anr-tensorrt --exclude anr-openvino --no-deps
       - name: Test retry-safe dynamic runtime initialization
         shell: python
         run: |

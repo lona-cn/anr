@@ -12,12 +12,14 @@ mod gpu {
     use anr_dfn3::{Executor, FRAME_SIZE, Model, backend};
 
     pub(crate) struct Gpu;
-    impl Executor for Gpu {
-        fn new(_model: Model) -> Result<Self> {
+    impl Gpu {
+        pub(crate) fn new(_model: Model) -> Result<Self> {
             Err(backend(
                 "native D3D12 inference is supported only on Windows",
             ))
         }
+    }
+    impl Executor for Gpu {
         fn frame(
             &mut self,
             _input: &[f32; FRAME_SIZE],
@@ -33,7 +35,7 @@ mod gpu {
 }
 
 use anr_core::{NoiseReduction, Result};
-use anr_dfn3::Denoiser;
+use anr_dfn3::{Denoiser, Model};
 use std::path::Path;
 
 /// One continuous 48 kHz mono DFN3 stream on a hardware D3D12 device.
@@ -53,8 +55,9 @@ impl DFN3 {
     /// Validates the supported model, then initializes hardware D3D12 compute.
     /// Other models and platforms return an error; WARP is never selected.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let model = Model::load(path.as_ref())?;
         Ok(Self {
-            inner: Denoiser::from_file::<gpu::Gpu>(path)?,
+            inner: Denoiser::spawn(move || gpu::Gpu::new(model))?,
         })
     }
 }

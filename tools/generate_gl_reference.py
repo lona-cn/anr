@@ -69,7 +69,7 @@ def main() -> None:
             raise ValueError(f"non-finite reference at frame {index}")
         output.append(enhanced[:len(chunk)])
     expected = np.concatenate(output).astype("<f4")
-    for backend in ("gl", "gles", "vk", "wgpu", "dx"):
+    for backend in ("gl", "gles", "vk", "wgpu", "dx", "cuda", "tensorrt", "openvino", "opencl"):
         directory = ROOT / f"crates/anr-{backend}/tests/fixtures"
         directory.mkdir(parents=True, exist_ok=True)
         audio.astype("<f4").tofile(directory / "reference_input.f32le")

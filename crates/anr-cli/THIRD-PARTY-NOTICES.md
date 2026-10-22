@@ -1,6 +1,6 @@
 # 第三方组件与分发说明
 
-`anr-cli` 自有代码采用 MIT OR Apache-2.0；这不改变依赖、运行库或模型的许可。本文件说明主要边界和源码获取方法，不代替各组件的完整许可，也不是任意 feature 组合的完整二进制许可清单。发布者应依据实际 Cargo.lock、启用 features、链接的 ONNX Runtime 构建和所附动态库，保留对应版权、许可及 NOTICE/ThirdPartyNotices 文件。
+`anr-cli` 自有代码采用 MIT OR Apache-2.0；这不改变依赖、运行库或模型的许可。本文件说明主要边界和源码获取方法，不代替各组件的完整许可，也不是任意 feature 组合的完整二进制许可清单。发布者应依据实际 Cargo.lock、启用 features、链接或动态加载的运行库和所附动态库，保留对应版权、许可及 NOTICE/ThirdPartyNotices 文件。
 
 ## 音频解码：Symphonia 0.5.5（MPL-2.0）
 
@@ -50,6 +50,20 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 只启用 `gl`、`gles`、`vk`、`wgpu`、`dx` 的构建不链接 Rust ORT 或 ONNX Runtime。`gl` 和 `gles` 共用 [glow](https://github.com/grovesNL/glow)、[glutin](https://github.com/rust-windowing/glutin) 和 raw-window-handle 调用系统驱动、管理原生上下文；GLES 生成 GLSL ES 310 并要求真实 ES context。`vk` 使用 [ash](https://github.com/ash-rs/ash)；`wgpu` 使用 [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu) 的原生硬件后端；`dx` 使用 [windows-rs](https://github.com/microsoft/windows-rs) 调用系统 D3D12、DXGI 和 D3DCompiler 47，不是 DirectML。驱动与系统库不随 crate 安装或打包，分发者应另行核对运行环境要求。
 
 共用 WGSL 算子通过 [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) 翻译为 GLSL、GLSL ES、SPIR-V 或 HLSL。参数解码使用 [prost](https://github.com/tokio-rs/prost)，摘要使用 [sha2](https://github.com/RustCrypto/hashes)，字节视图使用 [bytemuck](https://github.com/Lokathor/bytemuck)。各包及传递依赖保留自己的许可和版权通知；无 ORT 分发仍应按实际 Cargo.lock 收集对应文本，不能用项目许可代替。模型权重的授权与代码依赖分别处理。
+
+## 原生 CUDA、TensorRT、OpenVINO 与 OpenCL
+
+`cuda`、`tensorrt`、`openvino`、`opencl` 是独立于 ORT 的可选后端；它们不启用 Rust `ort` 或 ONNX Runtime。`ort-cuda`、`ort-tensorrt` 则仍属于 ORT provider 链。以下边界适用于实际启用和分发的组件，不意味着所有库都在默认 CPU ORT ZIP 中：
+
+| 组件 | 许可边界与一手来源 |
+| --- | --- |
+| `cudarc` 0.19.10 | 原生 CUDA 使用的 Rust Driver/NVRTC 动态绑定，**MIT OR Apache-2.0**；[上游](https://github.com/chelsea0x3b/cudarc)、[MIT](https://github.com/chelsea0x3b/cudarc/blob/main/LICENSE-MIT)、[Apache-2.0](https://github.com/chelsea0x3b/cudarc/blob/main/LICENSE-APACHE)、[精确版本源码](https://docs.rs/crate/cudarc/0.19.10/source/)。绑定许可不覆盖 NVIDIA 库。 |
+| NVIDIA CUDA Driver、NVRTC / NVRTC builtins、CUDA Runtime | 本项目的 CUDA kernel 源码不改变 NVIDIA 原生组件的许可。CUDA 后端运行时加载 Driver 和 NVRTC；TensorRT shim 还链接 CUDA Runtime 等库。按实际 SDK/运行库版本核对 [CUDA Toolkit EULA、Supplement 与 Attachment A](https://docs.nvidia.com/cuda/eula/index.html)，只分发被明确允许且满足分发条件的文件，保留适用许可和通知。驱动应通过厂商支持的安装渠道提供；不能由 Rust 绑定双许可推断驱动、整个 Toolkit 或任意 DLL 可自由再分发。 |
+| NVIDIA TensorRT | `anr-tensorrt` 编译本项目私有 C ABI shim，神经网络使用 TensorRT standard layers，DSP 使用 CUDA；不使用 ORT、ONNX parser 或自定义推理 plugin，但实际 `nvinfer` 等 vendor runtime 仍受 [TensorRT SDK License Agreement 及 Supplement](https://docs.nvidia.com/deeplearning/tensorrt/latest/reference/sla.html) 和随 SDK 的通知约束。[TensorRT 开源仓库的 Apache-2.0 许可](https://github.com/NVIDIA/TensorRT/blob/main/LICENSE) 不可泛化为所有二进制 SDK 的许可。 |
+| OpenVINO Runtime、ONNX frontend、设备 plugins | `anr-openvino` 的私有 shim 调用原生 C++ Runtime。OpenVINO 项目采用 **Apache-2.0**，见 [上游 LICENSE](https://github.com/openvinotoolkit/openvino/blob/master/LICENSE)；分发时保留实际所用版本的许可、版权、适用 NOTICE 和 [third-party-programs 通知](https://github.com/openvinotoolkit/openvino/tree/master/licensing)。wheel 只是 SDK/runtime 的一种来源，不免除这些义务，也不使 Python 成为 CLI 运行依赖。GPU/NPU plugin 依赖的系统驱动及其他组件须按各自条款另行核对。 |
+| OpenCL ICD loader 与厂商 GPU runtime/driver | `anr-opencl` 通过 `libloading` 动态加载系统 OpenCL；不内置 ICD loader 或厂商实现。[Khronos OpenCL ICD Loader](https://github.com/KhronosGroup/OpenCL-ICD-Loader) 的 [Apache-2.0 许可](https://github.com/KhronosGroup/OpenCL-ICD-Loader/blob/main/LICENSE) 只覆盖该实现，不能据此推断本机 `OpenCL.dll` / `libOpenCL.so` 的实际来源或厂商 GPU ICD 的许可。具体驱动/runtime 按供应商条款处理，例如 [NVIDIA 驱动许可](https://www.nvidia.com/en-us/drivers/nvidia-license/)；loader 本身不提供硬件 GPU 执行。 |
+
+私有 `anr_tensorrt_native` / `anr_openvino_native` shared shim 的本项目源码仍采用 MIT OR Apache-2.0，但分发 shim 不会替代其 vendor runtime 的分发审查；Rust `libloading`、构建依赖 `cc` 及传递依赖也保留各自通知。SDK headers、链接库、运行库、frontend/plugin 和驱动是不同组件，不应把整个 SDK 目录无差别放入安装包。默认 Release ZIP 仍仅携带 CPU ORT 及既有资产；自行提供原生后端包时，须收集真实依赖闭包及每项适用许可，不将下载/编译成功视为取得再分发授权。
 
 ## Rust ORT 绑定与 ONNX Runtime 是两个组件
 

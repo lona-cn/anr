@@ -48,8 +48,8 @@ pub(crate) struct Gpu<const ES: bool> {
     current: usize,
     zeros: Vec<f32>,
 }
-impl<const ES: bool> Executor for Gpu<ES> {
-    fn new(mut model: Model) -> Result<Self> {
+impl<const ES: bool> Gpu<ES> {
+    pub(crate) fn new(mut model: Model) -> Result<Self> {
         let context = GlContext::new(if ES { GlApi::Gles } else { GlApi::Desktop })?;
         let gl = &context.gl;
         let alignment = unsafe { gl.get_parameter_i32(glow::UNIFORM_BUFFER_OFFSET_ALIGNMENT) };
@@ -145,6 +145,8 @@ impl<const ES: bool> Executor for Gpu<ES> {
             zeros,
         })
     }
+}
+impl<const ES: bool> Executor for Gpu<ES> {
     fn frame(
         &mut self,
         input: &[f32; FRAME_SIZE],
