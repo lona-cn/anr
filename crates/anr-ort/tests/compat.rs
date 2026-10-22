@@ -7,6 +7,11 @@ use onnx_protobuf::{
 use protobuf::MessageField;
 use std::sync::LazyLock;
 
+#[path = "compat/nonzero.rs"]
+mod nonzero;
+#[path = "compat/simplify.rs"]
+mod simplify;
+
 static ENVIRONMENT: LazyLock<ort::environment::Environment> = LazyLock::new(|| {
     anr_ort::initialize_runtime().unwrap();
     ort::init().build().unwrap()
@@ -96,6 +101,31 @@ fn session(bytes: &[u8], target: ModelTarget) -> ort::session::Session {
         .unwrap()
         .commit_from_memory(&prepared)
         .unwrap()
+}
+
+fn gpu_targets() -> [ModelTarget; 3] {
+    [
+        ModelTarget::Cuda,
+        ModelTarget::TensorRT,
+        ModelTarget::DirectML,
+    ]
+}
+
+fn prepared_graph(bytes: &[u8], target: ModelTarget) -> GraphProto {
+    ModelProto::parse_from_bytes(&prepare_model(bytes, target).unwrap())
+        .unwrap()
+        .graph
+        .unwrap()
+}
+
+fn boolean(name: &str, shape: &[i64], data: &[bool]) -> TensorProto {
+    TensorProto {
+        name: name.into(),
+        dims: shape.into(),
+        data_type: 9,
+        raw_data: data.iter().map(|&value| u8::from(value)).collect(),
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -538,4 +568,190 @@ fn gpu_external_weights_keep_the_callers_directory() {
         output["y"].try_extract_tensor::<f32>().unwrap().1,
         &[3.0, -6.0]
     );
+}
+
+#[test]
+fn relu_convolution_is_portable_without_losing_bias_or_residual() {
+    for residual in [false, true] {
+        let inputs = if residual {
+            vec!["x", "w", "bias", "z"]
+        } else {
+            vec!["x", "w", "bias"]
+        };
+        let mut convolution = node("FusedConv", &inputs, &["y"]);
+        convolution.domain = "com.microsoft".into();
+        convolution.attribute.push(AttributeProto {
+            name: "activation".into(),
+            type_: AttributeType::STRING.into(),
+            s: b"Relu".into(),
+            ..Default::default()
+        });
+        let bytes = model(GraphProto {
+            name: "portable-relu-convolution".into(),
+            node: vec![convolution],
+            input: vec![port("x", &[1, 1, 3], 1)],
+            output: vec![port("y", &[1, 1, 3], 1)],
+            initializer: vec![
+                floats("w", &[1, 1, 1], &[2.0]),
+                floats("bias", &[1], &[1.0]),
+                floats("z", &[1, 1, 3], &[1.0, -1.0, 0.0]),
+            ],
+            ..Default::default()
+        });
+        for target in [ModelTarget::TensorRT, ModelTarget::DirectML] {
+            let graph = prepared_graph(&bytes, target);
+            assert!(
+                graph
+                    .node
+                    .iter()
+                    .all(|node| { node.domain != "com.microsoft" || node.op_type != "FusedConv" })
+            );
+            let mut session = session(&bytes, target);
+            let input =
+                ort::value::Tensor::from_array(([1, 1, 3], vec![-1.0_f32, 0.0, 1.0])).unwrap();
+            let output = session.run(ort::inputs!["x" => input]).unwrap();
+            let expected = if residual {
+                [0.0, 0.0, 3.0]
+            } else {
+                [0.0, 1.0, 3.0]
+            };
+            assert_eq!(
+                output["y"].try_extract_tensor::<f32>().unwrap().1,
+                &expected
+            );
+        }
+    }
+}
+
+#[test]
+fn portable_scaled_matmul_preserves_batched_vector_products() {
+    let mut multiplication = node("FusedMatMul", &["x", "w"], &["y"]);
+    multiplication.domain = "com.microsoft".into();
+    multiplication.attribute.push(AttributeProto {
+        name: "alpha".into(),
+        type_: AttributeType::FLOAT.into(),
+        f: 0.25,
+        ..Default::default()
+    });
+    let bytes = model(GraphProto {
+        name: "portable-batched-scaled-matmul".into(),
+        node: vec![multiplication],
+        input: vec![port("x", &[3], 1)],
+        output: vec![port("y", &[2, 2], 1)],
+        initializer: vec![floats(
+            "w",
+            &[2, 3, 2],
+            &[1.0, 0.0, 0.0, 1.0, 1.0, 1.0, -1.0, 0.0, 0.0, 2.0, 2.0, -1.0],
+        )],
+        ..Default::default()
+    });
+    for target in [ModelTarget::TensorRT, ModelTarget::DirectML] {
+        let graph = prepared_graph(&bytes, target);
+        assert!(
+            graph
+                .node
+                .iter()
+                .all(|node| { node.domain != "com.microsoft" || node.op_type != "FusedMatMul" })
+        );
+        let mut session = session(&bytes, target);
+        let input = ort::value::Tensor::from_array(([3], vec![1.0_f32, 2.0, 3.0])).unwrap();
+        let output = session.run(ort::inputs!["x" => input]).unwrap();
+        let (shape, values) = output["y"].try_extract_tensor::<f32>().unwrap();
+        assert_eq!(&shape[..], &[2, 2]);
+        assert_eq!(values, &[1.0, 1.25, 1.25, 0.25]);
+    }
+}
+
+#[test]
+fn fixed_state_selection_stays_tensor_only_and_keeps_the_live_condition() {
+    let mut conditional = node("If", &["condition"], &["y"]);
+    conditional.attribute = vec![
+        branch_attribute(
+            "then_branch",
+            GraphProto {
+                name: "first-state".into(),
+                node: vec![node("Identity", &["first"], &["result"])],
+                output: vec![port("result", &[2], 1)],
+                ..Default::default()
+            },
+        ),
+        branch_attribute(
+            "else_branch",
+            GraphProto {
+                name: "second-state".into(),
+                node: vec![node("Identity", &["second"], &["result"])],
+                output: vec![port("result", &[2], 1)],
+                ..Default::default()
+            },
+        ),
+    ];
+    let bytes = model(GraphProto {
+        name: "fixed-state-conditional".into(),
+        node: vec![
+            node("SplitToSequence", &["x", "lengths"], &["sequence"]),
+            node("SequenceAt", &["sequence", "zero"], &["first"]),
+            node("SequenceAt", &["sequence", "one"], &["second"]),
+            conditional,
+        ],
+        input: vec![port("x", &[4], 1), port("condition", &[], 9)],
+        output: vec![port("y", &[2], 1)],
+        initializer: vec![
+            integers("lengths", &[2], &[2, 2]),
+            integers("zero", &[], &[0]),
+            integers("one", &[], &[1]),
+        ],
+        ..Default::default()
+    });
+    for target in gpu_targets() {
+        let graph = prepared_graph(&bytes, target);
+        assert!(graph.node.iter().all(|node| !matches!(
+            node.op_type.as_str(),
+            "If" | "SplitToSequence" | "SequenceAt"
+        )));
+        let mut session = session(&bytes, target);
+        for (condition, expected) in [(false, [3.0, 4.0]), (true, [1.0, 2.0])] {
+            let input =
+                ort::value::Tensor::from_array(([4], vec![1.0_f32, 2.0, 3.0, 4.0])).unwrap();
+            let condition =
+                ort::value::Tensor::from_array((Vec::<usize>::new(), vec![condition])).unwrap();
+            let output = session
+                .run(ort::inputs!["x" => input, "condition" => condition])
+                .unwrap();
+            assert_eq!(
+                output["y"].try_extract_tensor::<f32>().unwrap().1,
+                &expected
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_bfloat16_product_does_not_become_an_invalid_standard_schema() {
+    let mut multiplication = node("FusedMatMul", &["x", "w"], &["y"]);
+    multiplication.domain = "com.microsoft".into();
+    let bytes = model(GraphProto {
+        name: "legacy-bfloat16-matmul".into(),
+        node: vec![multiplication],
+        input: vec![port("x", &[2, 2], 16), port("w", &[2, 2], 16)],
+        output: vec![port("y", &[2, 2], 16)],
+        ..Default::default()
+    });
+    let mut parsed = ModelProto::parse_from_bytes(&bytes).unwrap();
+    parsed.opset_import[0].version = 12;
+    let bytes = parsed.write_to_bytes().unwrap();
+    for target in [ModelTarget::TensorRT, ModelTarget::DirectML] {
+        let prepared = prepare_model(&bytes, target).unwrap();
+        let result = ort::session::Session::builder(&ENVIRONMENT)
+            .unwrap()
+            .with_no_environment_execution_providers()
+            .unwrap()
+            .with_intra_threads(1)
+            .unwrap()
+            .commit_from_memory(&prepared);
+        if let Err(error) = result {
+            // CPU may lack a BF16 kernel, but preparation must not invalidate
+            // the schema of a graph that another provider can execute.
+            assert_ne!(error.code(), ort::ErrorCode::InvalidGraph, "{error}");
+        }
+    }
 }

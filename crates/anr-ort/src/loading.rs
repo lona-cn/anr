@@ -8,9 +8,9 @@ use std::path::Path;
 
 /// Loads a model with the requested providers and their required graph preparation.
 ///
-/// CUDA and TensorRT models are prepared in memory; the source file is never changed.
-/// Other providers retain ONNX Runtime's file-loading behavior. Provider registration
-/// errors are returned, while ordinary per-operator CPU placement remains allowed.
+/// CUDA, TensorRT, and DirectML models are prepared in memory; the source file is
+/// never changed. Other providers retain ONNX Runtime's file-loading behavior.
+/// Registration errors are returned; ordinary per-operator CPU placement is allowed.
 pub fn session_from_file(
     mut builder: SessionBuilder,
     path: impl AsRef<Path>,
@@ -22,6 +22,11 @@ pub fn session_from_file(
         .any(|provider| provider.name() == "TensorrtExecutionProvider")
     {
         Some(ModelTarget::TensorRT)
+    } else if providers
+        .iter()
+        .any(|provider| provider.name() == "DmlExecutionProvider")
+    {
+        Some(ModelTarget::DirectML)
     } else if providers
         .iter()
         .any(|provider| provider.name() == "CUDAExecutionProvider")
@@ -47,7 +52,7 @@ pub fn session_from_file(
             .and_then(Path::to_str)
             .ok_or_else(|| {
                 Error::InvalidModel(
-                    "CUDA/TensorRT in-memory loading requires a UTF-8 model directory to resolve external weights".into(),
+                    "GPU in-memory loading requires a UTF-8 model directory to resolve external weights".into(),
                 )
             })?;
         builder = builder

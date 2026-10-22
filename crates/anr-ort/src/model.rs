@@ -10,13 +10,18 @@ use onnx_protobuf::{
 };
 use protobuf::MessageField;
 
+mod nonzero;
+mod simplify;
+
 /// The GPU provider whose unsupported exported operators should be expanded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelTarget {
-    /// Expand the unsupported sigmoid Microsoft convolution fusion.
+    /// Retain supported CUDA fusions while lowering avoidable host-side work.
     Cuda,
-    /// Also lower statically addressable sequences and simple tensor conditionals.
+    /// Expand Microsoft fusions and lower fixed-shape state and control flow.
     TensorRT,
+    /// Use standard tensor operators instead of Microsoft fusions and sequences.
+    DirectML,
 }
 
 /// Prepare a model without changing its weights, public ports, or source file.
@@ -49,11 +54,15 @@ pub fn prepare_model(model: &[u8], target: ModelTarget) -> Result<Cow<'_, [u8]>>
         .ok_or_else(|| Error::InvalidModel("ONNX model has no graph".into()))?;
     let mut names = Names::default();
     names.collect(graph);
-    let mut changed = expand_convolutions(graph, &mut names, &functions);
-    if target == ModelTarget::TensorRT {
-        changed |= lower_sequences(graph, opset, &mut names, &functions);
-        changed |= lower_conditionals(graph, opset, &mut names, &functions);
+    let mut changed = expand_convolutions(graph, target, &mut names, &functions);
+    if target != ModelTarget::Cuda {
+        changed |= expand_scaled_matmuls(graph, opset, &mut names, &functions);
     }
+    changed |= lower_sequences(graph, opset, &mut names, &functions);
+    changed |= nonzero::lower_zero_predicates(graph, opset, &mut names, &functions);
+    changed |= simplify::simplify(graph, opset, &mut names, &functions);
+    changed |= lower_conditionals(graph, opset, &mut names, &functions);
+    changed |= simplify::simplify(graph, opset, &mut names, &functions);
     if !changed {
         return Ok(Cow::Borrowed(model));
     }
@@ -161,29 +170,53 @@ fn integer_attribute(node: &NodeProto, name: &str, default: i64) -> Option<i64> 
     }
 }
 
-fn expand_convolutions(graph: &mut GraphProto, names: &mut Names, functions: &Functions) -> bool {
+fn expand_convolutions(
+    graph: &mut GraphProto,
+    target: ModelTarget,
+    names: &mut Names,
+    functions: &Functions,
+) -> bool {
     let mut changed = false;
     let mut nodes = Vec::with_capacity(graph.node.len());
     for mut node in std::mem::take(&mut graph.node) {
         for attribute in &mut node.attribute {
             if let Some(child) = attribute.g.as_mut() {
-                changed |= expand_convolutions(child, names, functions);
+                changed |= expand_convolutions(child, target, names, functions);
             }
             for child in &mut attribute.graphs {
-                changed |= expand_convolutions(child, names, functions);
+                changed |= expand_convolutions(child, target, names, functions);
             }
         }
-        let activations: Vec<_> = node
+        let mut activations = node
             .attribute
             .iter()
-            .filter(|attribute| attribute.name == "activation")
-            .collect();
-        let sigmoid = activations.len() == 1
-            && activations[0].type_.value() == AttributeType::STRING as i32
-            && activations[0].s == b"Sigmoid";
+            .filter(|attribute| attribute.name == "activation");
+        let activation = match (activations.next(), activations.next()) {
+            (Some(attribute), None) if attribute.type_.value() == AttributeType::STRING as i32 => {
+                match attribute.s.as_slice() {
+                    b"Sigmoid" => Some("Sigmoid"),
+                    b"Relu" if target != ModelTarget::Cuda => Some("Relu"),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let mut parameters = node
+            .attribute
+            .iter()
+            .filter(|attribute| attribute.name == "activation_params");
+        let parameterless = match (parameters.next(), parameters.next()) {
+            (None, _) => true,
+            (Some(attribute), None) => {
+                attribute.type_.value() == AttributeType::FLOATS as i32
+                    && attribute.floats.is_empty()
+            }
+            _ => false,
+        };
         if node.domain != "com.microsoft"
             || node.op_type != "FusedConv"
-            || !sigmoid
+            || activation.is_none()
+            || !parameterless
             || !node.overload.is_empty()
             || !(2..=4).contains(&node.input.len())
             || node.output.len() != 1
@@ -219,7 +252,107 @@ fn expand_convolutions(graph: &mut GraphProto, names: &mut Names, functions: &Fu
         } else {
             convolution
         };
-        nodes.push(operator("Sigmoid", vec![activation_input], vec![output]));
+        nodes.push(operator(
+            activation.unwrap(),
+            vec![activation_input],
+            vec![output],
+        ));
+        changed = true;
+    }
+    graph.node = nodes;
+    changed
+}
+
+fn expand_scaled_matmuls(
+    graph: &mut GraphProto,
+    opset: i64,
+    names: &mut Names,
+    functions: &Functions,
+) -> bool {
+    // FusedMatMul accepts BF16 even when the imported MatMul schema does not.
+    if opset < 13 {
+        return false;
+    }
+    let mut changed = false;
+    let mut nodes = Vec::with_capacity(graph.node.len());
+    for mut node in std::mem::take(&mut graph.node) {
+        for attribute in &mut node.attribute {
+            if let Some(child) = attribute.g.as_mut() {
+                changed |= expand_scaled_matmuls(child, opset, names, functions);
+            }
+            for child in &mut attribute.graphs {
+                changed |= expand_scaled_matmuls(child, opset, names, functions);
+            }
+        }
+        if node.domain != "com.microsoft"
+            || node.op_type != "FusedMatMul"
+            || !node.overload.is_empty()
+            || node.input.len() != 2
+            || node.input.iter().any(String::is_empty)
+            || node.output.len() != 1
+            || node.output[0].is_empty()
+            || functions.contains(&(
+                node.domain.clone(),
+                node.op_type.clone(),
+                node.overload.clone(),
+            ))
+            || node.attribute.iter().any(|attribute| {
+                !matches!(
+                    attribute.name.as_str(),
+                    "alpha" | "transA" | "transB" | "transBatchA" | "transBatchB"
+                )
+            })
+            || ["transA", "transB", "transBatchA", "transBatchB"]
+                .iter()
+                .any(|name| integer_attribute(&node, name, 0) != Some(0))
+        {
+            nodes.push(node);
+            continue;
+        }
+        let mut scales = node
+            .attribute
+            .iter()
+            .filter(|attribute| attribute.name == "alpha");
+        let alpha = match (scales.next(), scales.next()) {
+            (None, _) => Some(1.0),
+            (Some(attribute), None) if attribute.type_.value() == AttributeType::FLOAT as i32 => {
+                Some(attribute.f)
+            }
+            _ => None,
+        };
+        let Some(alpha) = alpha else {
+            nodes.push(node);
+            continue;
+        };
+        // FusedMatMul's operands share a type. A known FLOAT operand proves
+        // that the scalar scale will not introduce a mixed-type Mul.
+        if alpha != 1.0
+            && !node.input.iter().any(|name| {
+                input_tensor(graph, name).is_some_and(|(element_type, _)| element_type == 1)
+            })
+        {
+            nodes.push(node);
+            continue;
+        }
+        node.domain.clear();
+        node.op_type = "MatMul".into();
+        node.attribute.clear();
+        if alpha == 1.0 {
+            nodes.push(node);
+        } else {
+            let output = node.output[0].clone();
+            let product = names.fresh();
+            let scale = names.fresh();
+            node.output[0] = product.clone();
+            nodes.push(node);
+            graph.initializer.push(TensorProto {
+                name: scale.clone(),
+                data_type: 1,
+                float_data: vec![alpha],
+                ..Default::default()
+            });
+            nodes.push(operator("Mul", vec![product, scale], vec![output]));
+        }
         changed = true;
     }
     graph.node = nodes;
@@ -559,49 +692,52 @@ fn lower_sequences(
 // Deliberately limited to deterministic tensor computations. No custom domains,
 // functions, graph attributes, sequences, random operators, or control flow can
 // become eagerly evaluated through this path.
+fn pure_tensor_operator(node: &NodeProto, functions: &Functions) -> bool {
+    matches!(
+        node.op_type.as_str(),
+        "Identity"
+            | "Constant"
+            | "Add"
+            | "Sub"
+            | "Mul"
+            | "Div"
+            | "Pow"
+            | "Neg"
+            | "Abs"
+            | "Exp"
+            | "Log"
+            | "Sqrt"
+            | "Reciprocal"
+            | "Min"
+            | "Max"
+            | "Clip"
+            | "Where"
+            | "Gather"
+            | "Equal"
+            | "Greater"
+            | "GreaterOrEqual"
+            | "Less"
+            | "LessOrEqual"
+            | "And"
+            | "Or"
+            | "Xor"
+            | "Not"
+    ) && builtin(node, &node.op_type, functions)
+        && node.attribute.iter().all(|attribute| {
+            attribute.g.is_none()
+                && attribute.graphs.is_empty()
+                && attribute.ref_attr_name.is_empty()
+        })
+}
+
 fn pure_branch(graph: &GraphProto, functions: &Functions) -> bool {
     graph.input.is_empty()
         && graph.sparse_initializer.is_empty()
         && graph.quantization_annotation.is_empty()
-        && graph.node.iter().all(|node| {
-            let allowed = matches!(
-                node.op_type.as_str(),
-                "Identity"
-                    | "Constant"
-                    | "Add"
-                    | "Sub"
-                    | "Mul"
-                    | "Div"
-                    | "Pow"
-                    | "Neg"
-                    | "Abs"
-                    | "Exp"
-                    | "Log"
-                    | "Sqrt"
-                    | "Reciprocal"
-                    | "Min"
-                    | "Max"
-                    | "Clip"
-                    | "Where"
-                    | "Gather"
-                    | "Equal"
-                    | "Greater"
-                    | "GreaterOrEqual"
-                    | "Less"
-                    | "LessOrEqual"
-                    | "And"
-                    | "Or"
-                    | "Xor"
-                    | "Not"
-            );
-            allowed
-                && builtin(node, &node.op_type, functions)
-                && node.attribute.iter().all(|attribute| {
-                    attribute.g.is_none()
-                        && attribute.graphs.is_empty()
-                        && attribute.ref_attr_name.is_empty()
-                })
-        })
+        && graph
+            .node
+            .iter()
+            .all(|node| pure_tensor_operator(node, functions))
 }
 
 fn branches<'a>(
