@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 新增 `anr-lite-evaluate`：加载指定 Burn 权重，以推理模式批量处理不同长度的语句，补偿模型延迟并输出原始长度的 48 kHz 单声道 float32 WAV；不剪裁、不调整音量，支持显式 GPU 选择，不回退到 CPU。
+- 新增 VoiceBank-DEMAND 客观音质评估工具：校准并补偿实际 DFN3 的固定延迟，比较完整 824 个官方测试样本的 WB-PESQ、STOI、SI-SDR、SNR，保存逐文件结果、配对差值与 bootstrap 置信区间；检查同名、等长、有效音频，不静默排除失败样本，也不将短跑或训练损失当成音质结论。
+- 训练验证和可选的训练后测试改为每批最多八段完整语句的推理，分别去掉补零后按原来的逐句损失与有效采样数加权，减少 GPU 调度开销，不修改训练目标或减少评估样本。
 - `anr-lite` 新增可选 `train` feature 与 `anr-lite-train`：读取已解压的 VoiceBank-DEMAND 28-speaker，使用 AdamW 和可微压缩幅度谱／复数谱／波形损失进行真实训练，支持 CPU Flex 与显式 wgpu 独显。
 - 训练程序严格检查同名等长的 48 kHz 单声道 PCM16 配对，按说话人划分验证集，掩蔽短片段补零；仅用验证集选模，官方测试集需显式启用。每次使用新目录保存 best/last 模型和训练记录，提供短跑步数／评估数量限制，不修改数据集，不将模型权重 checkpoint 冒充包含优化器状态的精确续训快照。
 - `anr-wgpu` 新增 `wasm32-unknown-unknown` 浏览器 WebGPU：通过 `anr::wgpu::web::DFN3` 异步处理，或使用生成的 JavaScript `DFN3` 类；共用模型字节校验、权重布局、WGSL 和固定调度，原生同步 API 不变，不新增 CPU/WebGL fallback。

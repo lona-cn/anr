@@ -1,6 +1,6 @@
 # anr
 
-[English](#english) | [简体中文](#简体中文)
+[English](#english) | [简体中文](#简体中文) | [Benchmark](#benchmark)
 
 ## English
 
@@ -295,7 +295,7 @@ No system-wide installation is required. CUDA needs the NVIDIA driver and discov
 
 The native `cuda` backend requires Driver API 12.0 or newer and NVRTC major 12 or 13. It probes the required driver symbols and returns ordinary errors for unsupported runtimes. It prefers NVRTC 13, then 12: Windows `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`; Linux `libnvrtc.so.13` / `.12` / unversioned `libnvrtc.so`. The driver must support PTX produced by the selected NVRTC, and NVRTC must support the GPU architecture; NVRTC 13 is not promised to work with an arbitrary 12.x driver. Its builtins dependencies must also be discoverable.
 
-**Recorded scope:** real streaming references and 10 raw/WAV/stereo/batch CLI checks passed for these four backends on Windows: CUDA/TensorRT/OpenCL on RTX 2080 Ti, OpenVINO CPU on AMD Ryzen 7 5800X, with CUDA 13.3, TensorRT 10.16.1, and OpenVINO 2026.4.0. OpenVINO GPU compilation failed selecting the original graph's `NonZero_count` kernel; NPU is untested. These are not cross-platform GPU or GPU/NPU success claims. The seven native benchmark choices (`gl,vk,dx,cuda,tensorrt,openvino,opencl`) completed 100 warmup / 1,000 measured frames each. TensorRT initialization took 17.342 s in that run; there is no persistent engine cache or fast-cold-start promise.
+**Recorded scope:** real streaming references and 10 raw/WAV/stereo/batch CLI checks passed for these four backends on Windows: CUDA/TensorRT/OpenCL on RTX 2080 Ti, OpenVINO CPU on AMD Ryzen 7 5800X, with CUDA 13.3, TensorRT 10.16.1, and OpenVINO 2026.4.0. OpenVINO GPU compilation failed selecting the original graph's `NonZero_count` kernel; NPU is untested. These are not cross-platform GPU or GPU/NPU success claims. The latest complete 10-backend timings, including TensorRT initialization, are in [Benchmark](#benchmark); TensorRT has no persistent engine cache or fast-cold-start promise.
 
 ### Benchmark native compute and ORT GPU inference
 
@@ -339,7 +339,7 @@ The table reports initialization, min/mean/max synchronous call latency, nearest
 
 ### Develop ANR-Lite-48 with Burn
 
-`anr-lite` is a separate Burn 0.22.1 model crate for **48 kHz, mono speech**. It implements the ANR-Lite-48 architecture and an optional VoiceBank-DEMAND training binary, but includes **no pretrained weights or automatic dataset downloads**. Random initialization is not a usable denoising model. It is not selected by the `anr` CLI and does not replace the hash-locked DFN3 export.
+`anr-lite` is a separate Burn 0.22.1 model crate for **48 kHz, mono speech**. It implements the ANR-Lite-48 architecture, optional VoiceBank-DEMAND training, and aligned checkpoint-to-audio export, but ships **no pretrained weights or automatic dataset downloads**. Random initialization is not a usable denoising model. It is not selected by the `anr` CLI and does not replace the hash-locked DFN3 export.
 
 The network combines 64-band ERB envelope features with 96-bin complex low-frequency features. Both encoders use 16 channels; the shared temporal core has two 128-dimensional GRUs with four groups and dense inter-group mixing. The two heads predict full-band gains and five-tap complex residual filters. The residual head starts at zero. Batch normalization uses Burn's `train()` / `valid()` modes.
 
@@ -376,17 +376,45 @@ Enable `train` to build `anr-lite-train`. Run from the workspace root; `--datase
 ```sh
 # CPU
 cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --device cpu
-# Discrete GPU, explicitly selected
-cargo run -p anr-lite --release --locked --features train,wgpu --bin anr-lite-train -- --device wgpu
+# GPU-only build; explicitly select the discrete adapter, with no CPU backend
+cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --device wgpu
 # Bounded GPU smoke: real updates, limited validation and checkpoint reload/test
 cargo run -p anr-lite --locked --features train,wgpu --bin anr-lite-train -- --device wgpu --epochs 1 --batch-size 2 --segment-seconds 0.04 --max-steps 2 --max-validation-items 1 --evaluate-test --max-test-items 1
 ```
 
 Defaults are 50 epochs, batch size 8, 2-second random paired crops, AdamW at learning rate 0.001 with gradient clipping, and seed 42. Short files are zero-padded with valid-length masking. The loss combines compressed-magnitude MSE, compressed-complex MSE (compression 0.3), and 0.1-weight waveform L1; analysis uses a Hann window, FFT 960, and hop 480.
 
-Speakers `p226,p287` are held out from the training directory by default; override with `--validation-speakers`. Validation uses complete utterances in inference mode. Only validation selects `best.bin`. The official test set is used only with `--evaluate-test`, after training, by loading that checkpoint. `--max-steps`, `--max-validation-items`, and `--max-test-items` are smoke limits: their results are not full-corpus evaluation or evidence of trained denoising quality.
+Speakers `p226,p287` are held out from the training directory by default; override with `--validation-speakers`. Validation renders complete utterances in inference batches of up to eight, removes each padded tail before computing the original per-utterance loss, and retains the sample-weighted corpus mean. Only validation selects `best.bin`. The official test set is used only with `--evaluate-test`, after training, by loading that checkpoint. `--max-steps`, `--max-validation-items`, and `--max-test-items` are smoke limits: their results are not full-corpus evaluation or evidence of trained denoising quality.
 
 Each run creates a new `target/anr-lite-training/<time>-<pid>` directory, or the new path supplied by `--output-dir`; an existing directory is refused. Artifacts are `config.json`, `splits.json`, `metrics.jsonl`, `summary.json`, `best.bin`, and `last.bin`. The records contain model parameters and BatchNorm state, **not optimizer/RNG state for exact training resume**. Load a trained record with `AnrLite48::new(&device).try_load_file(path)?.valid()`. Use `--help` for the complete argument list. FFmpeg is not required by the trainer.
+
+#### Evaluate a trained record against DFN3
+
+`anr-lite-evaluate` loads a supplied Burn record in `valid()` mode and renders aligned 48 kHz mono float32 WAVs. It resets state per utterance, batches variable-length inputs, preserves the original lengths, and does not clip or normalize output. It does not compute quality metrics itself. Output directories must be new.
+
+The following Windows PowerShell example assumes a completed run at `target/anr-lite-training/voicebank-full-v1`; use the actual `best.bin` from your run. Python 3.12 and a C/C++ compiler are needed to build PESQ from source on Windows. The isolated environment is reusable; do not recreate it for every evaluation.
+
+```powershell
+python -m venv target/anr-lite-quality/venv
+$py = "target/anr-lite-quality/venv/Scripts/python.exe"
+& $py -m pip install numpy==1.26.4 Cython==3.1.2 wheel==0.45.1 setuptools==80.9.0
+& $py -m pip install --no-build-isolation -r tools/requirements-anr-lite-quality.txt
+
+cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-evaluate -- --device wgpu --checkpoint target/anr-lite-training/voicebank-full-v1/best.bin --input-dir "datasets/VoiceBank-DEMAND 28-speaker/noisy_testset_wav" --output-dir target/anr-lite-quality/voicebank-full-v1/anr-lite
+
+cargo build -p anr-cli --release --locked --no-default-features --features wgpu --bin anr
+$target = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).target_directory
+$anr = Join-Path $target "release/anr.exe"
+& $py tools/export_dfn3_voicebank.py --executable $anr --model models/dfn3.onnx --backend wgpu --strength 0 --input-dir "datasets/VoiceBank-DEMAND 28-speaker/noisy_testset_wav" --output-dir target/anr-lite-quality/voicebank-full-v1/dfn3
+
+& $py tools/evaluate_voicebank.py --clean-dir "datasets/VoiceBank-DEMAND 28-speaker/clean_testset_wav" --noisy-dir "datasets/VoiceBank-DEMAND 28-speaker/noisy_testset_wav" --enhanced anr-lite=target/anr-lite-quality/voicebank-full-v1/anr-lite --enhanced dfn3=target/anr-lite-quality/voicebank-full-v1/dfn3 --output-dir target/anr-lite-quality/voicebank-full-v1/scores --workers 8
+```
+
+The reference exporter verifies the fixed model hash, calibrates latency from independent probes, appends zeros for the tail, and trims the same fixed delay from every utterance. DFN3 `strength=0` means **pure wet with its attenuation limiter disabled, not bypass**; this avoids mixing its differently delayed dry path. No test-clean correlation or gain fitting is used for alignment.
+
+Without `--limit`, the scorer requires all 824 matching official-test filenames. It writes per-file CSV/JSON, means and counts, paired ANR-minus-DFN3 differences, and seeded bootstrap 95% confidence intervals. WB-PESQ and STOI use identical 48-to-16 kHz resampling; zero-mean SI-SDR and scale-dependent SNR use the original 48 kHz samples. Float output peaks/RMS are retained, and invalid audio or metric failures are errors rather than silently omitted examples. `--limit` is explicitly smoke-only.
+
+Training loss is not an audio-quality score. These objective metrics do not prove listening quality, unseen-speaker generalization, or architecture superiority: the test has only two speakers, and this comparison does not audit the pretrained DFN3 corpus or its possible overlap. Burn records are not ONNX exports and are not automatically selected by the existing `anr` CLI.
 
 ### Which crate should I use?
 
@@ -407,7 +435,7 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 | `anr-openvino` | Native OpenVINO ONNX import and stateful inference on explicitly selected CPU/GPU/NPU; C++ SDK required. |
 | `anr-opencl` | Complete fixed-model FP32 OpenCL 1.2 hardware GPU inference without CPU fallback. |
 | `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
-| `anr-lite` | Develop and train ANR-Lite-48 in Burn, with differentiable streaming audio DSP, optional VoiceBank-DEMAND training, CPU and optional wgpu execution. No pretrained weights included. |
+| `anr-lite` | Develop, train, and evaluate ANR-Lite-48 in Burn, with differentiable streaming audio DSP, optional VoiceBank-DEMAND training/audio export, CPU and optional wgpu execution. No pretrained weights bundled. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
 | `anr-bench` | Workspace-only streaming benchmark for native `gl`/`vk`/`dx`/`cuda`/`opencl`, opt-in native TensorRT/OpenVINO, and optional ORT GPU providers; table/JSON output, not included in application release ZIPs. |
 
@@ -728,7 +756,7 @@ $env:OPENVINO_ROOT = 'C:\SDKs\openvino'
 
 原生 `cuda` 后端要求 Driver API 12.0 或更新版本，以及 major 12 或 13 的 NVRTC。它预检所需 driver 符号，不支持的运行库正常返回错误。加载优先 NVRTC 13、其次 12：Windows 为 `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`；Linux 为 `libnvrtc.so.13` / `.12` / 无版本号的 `libnvrtc.so`。驱动必须支持所选 NVRTC 生成的 PTX，NVRTC 也须支持 GPU 架构；不保证 NVRTC 13 能搭配任意 12.x 驱动。其 builtins 依赖也必须可被加载器找到。
 
-**已记录实测：** Windows 上四后端均通过真实连续帧 reference 和共 10 项 raw/WAV、立体声、批处理 CLI 检查；CUDA/TensorRT/OpenCL 使用 RTX 2080 Ti，OpenVINO CPU 使用 AMD Ryzen 7 5800X，SDK 版本为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。OpenVINO GPU 编译因原图 `NonZero_count` kernel 选择失败；NPU 未测。不能据此声称跨平台 GPU 或 OpenVINO GPU/NPU 验证通过。七个原生 benchmark 后端（`gl,vk,dx,cuda,tensorrt,openvino,opencl`）均完成各 100 帧预热、1000 帧正式测量；本次 TensorRT 初始化为 17.342 秒，没有持久 engine cache，不承诺快速冷启动。
+**已记录实测：** Windows 上四后端均通过真实连续帧 reference 和共 10 项 raw/WAV、立体声、批处理 CLI 检查；CUDA/TensorRT/OpenCL 使用 RTX 2080 Ti，OpenVINO CPU 使用 AMD Ryzen 7 5800X，SDK 版本为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。OpenVINO GPU 编译因原图 `NonZero_count` kernel 选择失败；NPU 未测。不能据此声称跨平台 GPU 或 OpenVINO GPU/NPU 验证通过。最新完整 10 后端性能与 TensorRT 初始化耗时见顶部 [Benchmark](#benchmark)；TensorRT 没有持久 engine cache，不承诺快速冷启动。
 
 ### 测试原生 Compute 和 ORT GPU 推理性能
 
@@ -772,7 +800,7 @@ cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --feature
 
 ### 使用 Burn 开发 ANR-Lite-48
 
-`anr-lite` 是独立的 Burn 0.22.1 模型库，输入为 **48 kHz 单声道语音**。已实现网络、音频处理与可选的 VoiceBank-DEMAND 训练 bin，但**不附带预训练权重，不自动下载数据集**。随机初始化模型不能直接用于有效降噪；`anr` CLI 不会选择它，也不会用它替换固定 SHA-256 的 DFN3 模型。
+`anr-lite` 是独立的 Burn 0.22.1 模型库，输入为 **48 kHz 单声道语音**。已实现网络、音频处理、可选的 VoiceBank-DEMAND 训练和权重到音频的推理程序，但**不打包预训练权重，不自动下载数据集**。随机初始化模型不能直接用于有效降噪；`anr` CLI 不会选择它，也不会用它替换固定 SHA-256 的 DFN3 模型。
 
 网络分别处理 64-band ERB 包络与最低 96 个频点的复数细节，编码器均为 16 通道；共享时序网络包含两层 128 维、四分组 GRU，每层后进行跨组混合。两个输出头分别预测全带增益和五 tap 复数残差滤波系数，残差头以零初始化。BatchNorm 沿用 Burn 的 `train()` / `valid()` 模式。
 
@@ -809,17 +837,27 @@ let output = processor.forward(&model, input);
 ```sh
 # CPU
 cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --device cpu
-# 明确选择独立 GPU
-cargo run -p anr-lite --release --locked --features train,wgpu --bin anr-lite-train -- --device wgpu
+# 仅编译 GPU 后端，并明确选择独立 GPU，不回退到 CPU
+cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --device wgpu
 # 短跑验收：真实更新参数、限量验证，并重载 checkpoint 测试
 cargo run -p anr-lite --locked --features train,wgpu --bin anr-lite-train -- --device wgpu --epochs 1 --batch-size 2 --segment-seconds 0.04 --max-steps 2 --max-validation-items 1 --evaluate-test --max-test-items 1
 ```
 
 默认训练 50 轮、batch size 8、随机裁剪 2 秒的配对片段，使用学习率 0.001 的 AdamW 与梯度裁剪，随机种子为 42。短文件补零，并按实际有效长度计算损失。损失由压缩幅度谱 MSE、压缩复数谱 MSE（压缩指数 0.3）及权重为 0.1 的波形 L1 组成，分析使用 Hann 窗、960 点 FFT、480 点 hop。
 
-默认从训练目录留出 `p226,p287` 两位说话人验证，可用 `--validation-speakers` 修改。验证以推理模式处理完整语句，只用验证损失选择 `best.bin`。只有显式添加 `--evaluate-test`，才会在训练结束后加载该 checkpoint 评估官方测试集。`--max-steps`、`--max-validation-items`、`--max-test-items` 用于短跑检查，其结果不代表完整数据集评估或已训练模型的降噪质量。
+默认从训练目录留出 `p226,p287` 两位说话人验证，可用 `--validation-speakers` 修改。验证以推理模式每批最多处理八段完整语句；计算损失前分别去掉补零部分，保留原来的逐句损失和按有效采样数加权的结果，只用验证损失选择 `best.bin`。只有显式添加 `--evaluate-test`，才会在训练结束后加载该 checkpoint 计算官方测试集损失。`--max-steps`、`--max-validation-items`、`--max-test-items` 用于短跑检查，其结果不代表完整数据集评估或已训练模型的降噪质量。
 
 每次运行新建 `target/anr-lite-training/<time>-<pid>`，也可用 `--output-dir` 指定新路径；已有目录会被拒绝，不覆盖旧训练结果。输出包括 `config.json`、`splits.json`、`metrics.jsonl`、`summary.json`、`best.bin`、`last.bin`。模型 record 保存权重与 BatchNorm 状态，**不包含优化器和随机数状态，不能用于精确续训**。加载训练后的权重使用 `AnrLite48::new(&device).try_load_file(path)?.valid()`。完整参数见 `--help`；训练程序本身不依赖 FFmpeg。
+
+#### 与 DFN3 比较客观音质
+
+`anr-lite-evaluate` 在 `valid()` 模式加载指定权重，按语句重置状态，批量输出已补偿延迟、保留原始长度的 48 kHz 单声道 float32 WAV，不剪裁、不调整音量。它只负责推理；PESQ、STOI 等指标由 `tools/evaluate_voicebank.py` 计算。完整 Windows 命令见上方 [Evaluate a trained record against DFN3](#evaluate-a-trained-record-against-dfn3)，GPU 推理须明确传入 `--device wgpu`。
+
+`tools/export_dfn3_voicebank.py` 使用实际 `anr` 程序和固定模型，先用独立探针验证延迟，再补齐尾部并统一去掉固定延迟，不按测试 clean 逐句寻找偏移。DFN3 的 `strength=0` 表示关闭衰减限制、输出纯 wet，**不是旁路**；这样不会混入时移不同的 dry 信号。所有输出目录必须为新目录，不能覆盖旧结果。
+
+不传 `--limit` 时，评分程序要求完整官方测试集的 824 个同名文件，输出逐文件 CSV/JSON、平均值、有效数量，以及 ANR-Lite 减 DFN3 的配对差值和固定随机种子的 bootstrap 95% 置信区间。WB-PESQ、STOI 统一重采样至 16 kHz，SI-SDR、SNR 使用原始 48 kHz 音频；另记录峰值、RMS 和超出满幅的采样数量，不静默跳过失败样本。`--limit` 仅用于短跑验收。
+
+训练损失不能代替音质指标；客观指标也不等于主观听感或新场景表现。测试集只有两位说话人，且本评估没有核查 DFN3 预训练数据及其与测试集的重叠，不能把差距全部归因于架构。Burn record 不是 ONNX，现有 `anr` CLI 不会自动使用这些权重。
 
 ### 各个包怎么选
 
@@ -840,7 +878,7 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 | `anr-openvino` | 原生 OpenVINO ONNX 导入与有状态推理，明确选择 CPU/GPU/NPU；需要 C++ SDK。 |
 | `anr-opencl` | 完整固定模型 FP32 OpenCL 1.2 硬件 GPU 推理，不退回 CPU。 |
 | `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
-| `anr-lite` | 使用 Burn 开发和训练 ANR-Lite-48，包含可微流式音频处理、可选的 VoiceBank-DEMAND 训练程序、CPU 与可选 wgpu 执行；不附带预训练权重。 |
+| `anr-lite` | 使用 Burn 开发、训练和评估 ANR-Lite-48，包含可微流式音频处理、可选的 VoiceBank-DEMAND 训练和音频导出程序、CPU 与可选 wgpu 执行；不打包预训练权重。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
 | `anr-bench` | 工作区内连续帧 benchmark，支持原生 `gl`/`vk`/`dx`/`cuda`/`opencl`、显式启用的原生 TensorRT/OpenVINO，以及可选 ORT GPU provider；输出表格或 JSON，不包含在应用 Release ZIP 中。 |
 

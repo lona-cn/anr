@@ -1,6 +1,6 @@
 # anr
 
-[English](#english) | [简体中文](#简体中文)
+[English](#english) | [简体中文](#简体中文) | [Benchmark](#benchmark)
 
 ## English
 
@@ -199,7 +199,7 @@ For these GL/GLES/Vulkan/wgpu/D3D12 shader backends, the original external ONNX 
 
 These backends validate the same fixed model hash and implement `NoiseReduction`, with one worker per stream and synchronous `run`. CUDA and OpenCL execute the complete fixed FP32 schedule, including FFT, normalization, recurrent inference, spectral filtering, and overlap-add; weights and state stay on GPU. CUDA uses the Driver API, NVRTC compilation, and replay graphs. OpenCL requires a hardware GPU ICD supporting OpenCL 1.2, with no CPU-device fallback. Neither requires a build-time SDK.
 
-TensorRT uses two real standard-layer neural-network engines plus CUDA DSP/FFT graphs, not ORT, an ONNX parser, or a monolithic inference plugin. It uses strongly typed FP32 with TF32 disabled. Initialization builds the engines; there is no persistent engine cache. The recorded initialization cost was 17.342 s, not a fast-cold-start guarantee.
+TensorRT uses two real standard-layer neural-network engines plus CUDA DSP/FFT graphs, not ORT, an ONNX parser, or a monolithic inference plugin. It uses strongly typed FP32 with TF32 disabled. Initialization builds the engines; there is no persistent engine cache. See [Benchmark](#benchmark) for the latest measured initialization cost, not a fast-cold-start guarantee.
 
 OpenVINO directly imports the original ONNX with its native frontend, rather than reading ONNX only as parameters. It uses `MakeStateful` (`ReadValue`/`Assign`) and one `InferRequest` per reducer; state remains inside the selected plugin, not a host round-trip every frame. `from_file` selects **CPU explicitly**, not as GPU fallback. CPU/GPU request accuracy-oriented FP32 inference; NPU hardware may use FP16 and is not verified against the FP32 tolerance.
 
@@ -254,7 +254,7 @@ cargo run -p anr-bench --release --features tensorrt,openvino -- --backend gl,vk
 
 `anr-bench` compiles CUDA/OpenCL into its default native build but still selects `gl,vk,dx` by default; TensorRT/OpenVINO require the named SDK features. All selections use the same input, warmup/state continuity, and timed-loop rules. JSON configuration includes `openvino_device`, successful OpenVINO results include `execution_device`, and native `cpu_fallback_allowed` is false **even for explicitly selected OpenVINO CPU**. It describes fallback policy, not GPU-only execution.
 
-Recorded Windows validation passed streaming references for all four backends and 10 real raw/WAV/stereo/batch CLI checks: CUDA/TensorRT/OpenCL on RTX 2080 Ti, OpenVINO CPU on AMD Ryzen 7 5800X; CUDA 13.3, TensorRT 10.16.1, OpenVINO 2026.4.0. All seven native benchmark selections completed 100 warmup and 1,000 measured frames each. OpenVINO GPU failed compiling the original graph's `NonZero_count` kernel; NPU was not tested. Cross-platform GPU and OpenVINO GPU/NPU success are not established. See the [root README](../../README.md#benchmark-native-compute-and-ort-gpu-inference) for full benchmark semantics and the separate ORT-provider path.
+Recorded Windows validation passed streaming references for all four backends and 10 real raw/WAV/stereo/batch CLI checks: CUDA/TensorRT/OpenCL on RTX 2080 Ti, OpenVINO CPU on AMD Ryzen 7 5800X; CUDA 13.3, TensorRT 10.16.1, OpenVINO 2026.4.0. The latest complete 10-backend timings are in [Benchmark](#benchmark). OpenVINO GPU failed compiling the original graph's `NonZero_count` kernel; NPU was not tested. Cross-platform GPU and OpenVINO GPU/NPU success are not established. See the [root README](../../README.md#benchmark-native-compute-and-ort-gpu-inference) for full benchmark semantics and the separate ORT-provider path.
 
 ### License
 
@@ -459,7 +459,7 @@ fn main() -> Result<()> {
 
 这些后端校验同一固定模型摘要，实现 `NoiseReduction`，每路流持有一个工作线程，`run` 同步等待结果。CUDA 与 OpenCL 使用固定 FP32 调度执行包括 FFT、归一化、循环网络、频谱滤波和 overlap-add 的完整流程，权重与状态常驻 GPU。CUDA 使用 Driver API、NVRTC 编译和 replay graph；OpenCL 需要支持 1.2 的硬件 GPU ICD，不会退回 CPU device。两者均不要求构建时 SDK。
 
-TensorRT 使用两个真正的标准层神经网络 engine 加上 CUDA DSP/FFT graph，不是 ORT、ONNX parser 或单体推理 plugin。采用强类型 FP32，禁用 TF32；初始化时构建 engines，没有持久 engine cache。已记录的一次初始化耗时为 17.342 秒，不代表快速冷启动。
+TensorRT 使用两个真正的标准层神经网络 engine 加上 CUDA DSP/FFT graph，不是 ORT、ONNX parser 或单体推理 plugin。采用强类型 FP32，禁用 TF32；初始化时构建 engines，没有持久 engine cache。最新初始化实测见顶部 [Benchmark](#benchmark)，不代表快速冷启动。
 
 OpenVINO 使用原生 frontend 直接导入原 ONNX，而不是只从 ONNX 读取参数。它使用 `MakeStateful`（`ReadValue`/`Assign`），每个降噪器独占一个 `InferRequest`，状态保留在所选 plugin 内，不逐帧往返主机。`from_file` 默认**明确选择 CPU**，不是 GPU fallback。CPU/GPU 请求偏重精度的 FP32 推理；NPU 硬件可能使用 FP16，尚未验证满足 FP32 reference 阈值。
 
@@ -514,7 +514,7 @@ cargo run -p anr-bench --release --features tensorrt,openvino -- --backend gl,vk
 
 `anr-bench` 默认原生构建已编入 CUDA/OpenCL，但默认选择仍为 `gl,vk,dx`；TensorRT/OpenVINO 需要同名 SDK features。各后端使用相同输入、预热/状态连续性及计时循环规则。JSON 配置含 `openvino_device`，OpenVINO 成功结果含 `execution_device`；原生后端的 `cpu_fallback_allowed` 均为 false，**明确选择 OpenVINO CPU 也如此**。它表示 fallback 策略，不代表仅在 GPU 执行。
 
-已有 Windows 实测：四后端连续帧 reference 和共 10 项真实 raw/WAV、立体声、批处理 CLI 检查通过；CUDA/TensorRT/OpenCL 在 RTX 2080 Ti，OpenVINO CPU 在 AMD Ryzen 7 5800X，SDK 为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。七个原生 benchmark 后端均完成各 100 帧预热、1000 帧正式测量。OpenVINO GPU 编译因原图 `NonZero_count` kernel 选择失败；NPU 未测。不能据此声称跨平台 GPU 或 OpenVINO GPU/NPU 验证通过。完整 benchmark 规则及独立的 ORT provider 路径见[根 README](../../README.md#测试原生-compute-和-ort-gpu-推理性能)。
+已有 Windows 实测：四后端连续帧 reference 和共 10 项真实 raw/WAV、立体声、批处理 CLI 检查通过；CUDA/TensorRT/OpenCL 在 RTX 2080 Ti，OpenVINO CPU 在 AMD Ryzen 7 5800X，SDK 为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。最新完整 10 后端性能见顶部 [Benchmark](#benchmark)。OpenVINO GPU 编译因原图 `NonZero_count` kernel 选择失败；NPU 未测。不能据此声称跨平台 GPU 或 OpenVINO GPU/NPU 验证通过。完整 benchmark 规则及独立的 ORT provider 路径见[根 README](../../README.md#测试原生-compute-和-ort-gpu-推理性能)。
 
 ### 许可
 
