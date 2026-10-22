@@ -93,11 +93,11 @@ python .github/scripts/smoke_release.py --archive <本平台ZIP路径> --control
 | 1 | `anr-core` |
 | 2 | `anr-ort`、`anr-dfn3` |
 | 3 | `anr-gl`、`anr-vk`、`anr-wgpu`、`anr-dx`、`anr-cuda`、`anr-tensorrt`、`anr-openvino`、`anr-opencl` |
-| 4 | `anr-gles` |
+| 4 | `anr-gles`、`anr-bench` |
 | 5 | `anr` |
 | 6 | `anr-cli` |
 
-`anr-lite` 可独立发布；`anr-bench` 设置了 `publish = false`。即使未启用某个后端，registry 也必须能解析 `anr` 的可选依赖。
+`anr-lite` 可独立发布；`anr-bench` 在其原生后端及 ORT 依赖发布后发布。即使未启用某个后端，registry 也必须能解析 `anr` 和 `anr-bench` 的可选依赖。
 
 对每个待发布的 crate 检查文件清单、解包构建和 dry-run。以下以 `anr-core` 为例：
 
@@ -121,11 +121,11 @@ GitHub workflow 不执行 `cargo publish`。同名同版本的 crate 一经发�
 
 ### v0.2.0 发布前文档核查
 
-15 个可发布 crate 均已声明 `description`、`license`、`repository` 和 `readme`；`cargo package --list` 确认各包清单含 README 和两份项目许可，CLI 另含第三方说明。`anr-bench` 不发布。现有说明已覆盖模型来源、默认 features、运行库/SDK、平台限制和发布顺序，不需要从头重写。
+16 个 crate 均可发布，已声明 `description`、`license`、`repository` 和 `readme`；源码包应含 README 和两份项目许可，CLI 另含第三方说明。`anr-bench` 也提供独立 README、许可和包内测试 fixture，但不包含在应用 ZIP 中。现有说明已覆盖模型来源、默认 features、运行库/SDK、平台限制和发布顺序，不需要从头重写。
 
 已完成两项高优先级文档工作：
 
-- **源码包 README 链接**：十个复用仓库首页的 crate 及其余五个包，跨包和仓库文件链接均改为对应 `v0.2.0` 的绝对地址；包内许可、示例和源文件保留相对链接。文件清单检查确认没有指向包外缺失文件的相对链接。
+- **源码包 README 链接**：十个复用仓库首页的 crate 及其余六个包，跨包和仓库文件链接使用对应版本的绝对地址；包内许可、示例和源文件保留相对链接。`anr-bench` 的新指南由其 crates.io 页面提供，不移动已经发布的 `v0.2.0` tag。
 - **registry 使用入口**：仓库首页、CLI、库和 ANR-Lite 已补齐中英文安装或依赖示例，保留 checkout 安装、离线及 Intel macOS 配置。ANR-Lite 已区分安装后的训练/导出工具与必须 checkout 的 Python 评分和复现流程。
 
 registry 命令适用于 `0.2.0` 发布后，版本固定的仓库链接需等 `v0.2.0` tag 发布后才能访问。本机已验证源码安装和独立工作目录下的工具使用，并通过本地 `[patch.crates-io]` 验证外部应用示例；这些检查不能代替 registry 安装验收。包含内部依赖的包在正式发布时，registry 必须能解析其依赖版本，不能用本机 workspace 构建代替。

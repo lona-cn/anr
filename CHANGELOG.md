@@ -48,7 +48,7 @@
 
 ### 性能测量
 
-- 新增工作区工具 `anr-bench`：使用固定种子的连续 48 kHz 单声道输入，串行比较后端，初始化单独计时，支持预热、后端/强度选择及 JSON。报告同步调用延迟、nearest-rank P50/P95/P99、FPS、RTF 与超过 10 ms 的帧数；单后端失败后继续运行，最终返回非零退出码。不包含在应用 ZIP 中。
+- 新增可独立安装的 `anr-bench` CLI，并发布到 crates.io：使用固定种子的连续 48 kHz 单声道输入，串行比较后端，初始化单独计时，支持预热、后端/强度选择及 JSON。报告同步调用延迟、nearest-rank P50/P95/P99、FPS、RTF 与超过 10 ms 的帧数；单后端失败后继续运行，最终返回非零退出码。不包含在应用 ZIP 中。独立 README 说明模型准备、安装、features、运行库和测量边界；源码包包含双许可及自有测试 fixture。
 - 默认构建不依赖 ORT，编入 `gl`、`vk`、`dx`、`cuda`、`opencl`，默认测量列表为 `gl,vk,dx`；TensorRT/OpenVINO 通过可选 SDK features 编入。另支持 `ort-cuda`、`ort-tensorrt`、`ort-directml` 与下载/动态运行库选项，ORT 后端共用一个 Environment。
 - JSON 记录 ORT 的 CPU 算子执行策略及 OpenVINO 请求/实际执行设备。`cpu_fallback_allowed` 表示策略，不是 GPU 算子占比；显式选择 OpenVINO CPU 仍标为 false。测量包含同步执行、CPU 算子和设备传输。历史数据、硬件范围及复现方法见 [benchmark.md](benchmark.md)。
 

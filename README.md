@@ -130,7 +130,7 @@ For backend platform restrictions, SDK/runtime deployment, constructors, and mod
 | [`anr-cuda`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-cuda), [`anr-tensorrt`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-tensorrt), [`anr-openvino`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-openvino), [`anr-opencl`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-opencl) | Native compute/runtime implementations; setup is documented in the facade guide. |
 | [`anr-dfn3`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-dfn3) | Shared fixed-model parameters, execution plan, worker, and shader sources; not a device backend. |
 | [`anr-lite`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-lite/README.md) | ANR-Lite-48 architecture, streaming/batch DSP, training, checkpoints, and DFN3 quality comparison. |
-| [`anr-bench`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-bench) · [benchmark guide](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md) | Workspace-only streaming benchmark; not included in application ZIPs. |
+| [`anr-bench`](https://crates.io/crates/anr-bench/0.2.0) · [benchmark guide](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md) | Independently installable streaming benchmark CLI; not included in application ZIPs. |
 | [Dataset catalog](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md) | Dataset formats, access, and license conditions. |
 | [Release guide](https://github.com/lona-cn/anr/blob/v0.2.0/RELEASING.md) · [CI workflow](https://github.com/lona-cn/anr/blob/v0.2.0/.github/workflows/ci.yml) | Packaging, version/tag policy, verification, and GitHub publication. |
 
@@ -272,7 +272,7 @@ anr = { version = "0.2.0", default-features = false, features = ["vk"] }
 | [`anr-cuda`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-cuda)、[`anr-tensorrt`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-tensorrt)、[`anr-openvino`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-openvino)、[`anr-opencl`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-opencl) | 原生 Compute/runtime 实现，配置说明集中在 facade 文档。 |
 | [`anr-dfn3`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-dfn3) | 共用固定模型参数、执行顺序、worker 与 shader 源码，本身不是设备后端。 |
 | [`anr-lite`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-lite/README.md) | ANR-Lite-48 架构、流式/批量 DSP、训练、checkpoint 和 DFN3 音质比较。 |
-| [`anr-bench`](https://github.com/lona-cn/anr/tree/v0.2.0/crates/anr-bench) · [性能文档](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md) | 工作区内的连续帧 benchmark，不包含在应用 ZIP 中。 |
+| [`anr-bench`](https://crates.io/crates/anr-bench/0.2.0) · [性能文档](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md) | 可独立安装的连续帧 benchmark CLI，不包含在应用 ZIP 中。 |
 | [数据集目录](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md) | 数据格式、获取方式及许可条件。 |
 | [发版指南](https://github.com/lona-cn/anr/blob/v0.2.0/RELEASING.md) · [CI 工作流](https://github.com/lona-cn/anr/blob/v0.2.0/.github/workflows/ci.yml) | 打包、版本/tag 策略、验证和 GitHub 发布。 |
 

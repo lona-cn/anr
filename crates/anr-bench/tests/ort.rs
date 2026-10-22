@@ -12,8 +12,7 @@ use std::{path::PathBuf, process::Command};
 fn gpu_providers_share_environment_and_complete_streaming_measurements() {
     // The existing self-authored graph exercises GPU execution without claiming
     // compatibility or performance for the real DFN3 weights.
-    let model =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../anr-cli/tests/fixtures/control.onnx");
+    let model = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control.onnx");
     let output = Command::new(env!("CARGO_BIN_EXE_anr-bench"))
         .arg("--model")
         .arg(model)

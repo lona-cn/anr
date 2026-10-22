@@ -43,6 +43,17 @@
 
 当前 `anr-bench` 的 `--backend` 枚举仅包含表中的十项。GLES、wgpu、ORT CPU、CoreML 和 XNNPACK 没有本工具的测量入口，也没有本报告中的结果；这不等于库或 CLI 不支持这些后端。工具默认编入 `gl`、`vk`、`dx`、`cuda`、`opencl`，默认只选择 `gl,vk,dx`。原生 TensorRT、OpenVINO 和三个 ORT provider 需要各自的 feature。
 
+## 安装工具
+
+`anr-bench` 可从 crates.io 独立安装，默认使用优化构建，不自动下载模型或 ONNX Runtime：
+
+```text
+cargo install anr-bench --version 0.2.0 --locked
+anr-bench --model /absolute/path/to/dfn3.onnx --backend vk --warmup 100 --frames 1000 --strength 80 --json
+```
+
+将模型路径换为自己的文件；此例需要 Windows/Linux 的硬件 Vulkan。已安装的工具可在任意目录运行，模型相对路径以当前工作目录为准。默认编入的后端、可选 features、自备运行库及 SDK 配置见 [独立使用指南](https://crates.io/crates/anr-bench/0.2.0)。下方保留的是源码 checkout 的完整十后端复现流程，不是默认安装就能运行的配置。
+
 ## 复现
 
 ### 前置条件

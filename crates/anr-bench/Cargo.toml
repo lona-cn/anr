@@ -4,7 +4,11 @@ description = "Streaming DFN3 inference benchmark for native compute and ONNX Ru
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository = "https://github.com/lona-cn/anr"
+readme = "README.md"
+keywords = ["audio", "benchmark", "noise-reduction", "denoise", "deepfilternet"]
+categories = ["command-line-utilities", "multimedia::audio", "development-tools::profiling"]
+include = ["src/**", "tests/**", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
 anr-core.workspace = true
