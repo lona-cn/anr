@@ -6,7 +6,7 @@
 
 `anr` provides a Rust interface to six DFN3 backends: ORT, OpenGL, GLES, Vulkan, wgpu, and D3D12. It processes **48 kHz, mono `f32` samples** with equally sized input and output. No backend is enabled by default. With `ort`, use `anr::DFN3`; with another backend, use its module, such as `anr::wgpu::DFN3`.
 
-The library does not read microphones, decode WAV, or resample audio. You'll need the **latest stable Rust toolchain** and a model file of your own.
+The library does not read microphones, decode WAV, or resample audio. You'll need the **latest stable Rust toolchain**. Default features download and prepare the supported DFN3 model at build time.
 
 ### Choose a backend
 
@@ -43,7 +43,7 @@ use anr::{DFN3, NoiseReduction, Result};
 fn main() -> Result<()> {
     anr::ort::initialize_runtime()?;
     let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    let mut denoiser = DFN3::from_file(&environment, anr::default_model_path()?)?;
     denoiser.set_factor(80.0);
 
     let input = [0.0_f32; DFN3::FRAME_SIZE];
@@ -54,7 +54,17 @@ fn main() -> Result<()> {
 }
 ```
 
-The example processes silence; replace it with your own samples. The model path is relative to your program's working directory. Models are not included in the Rust packages or downloaded automatically.
+The example processes silence; replace it with your own samples. `default_model_path()` finds `models/dfn3.onnx` beside the executable, then the model prepared at build time; it does not depend on the working directory or download at runtime.
+
+### Model download and copying
+
+`download-models` and `copy-models` are both enabled by default and do not enable an inference backend. The downloader fetches [the pinned DFN3 release](https://github.com/lona-cn/anr/releases/download/model-dfn3-fe5eb64fa2e4/dfn3.onnx), verifies SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`, and reuses `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/dfn3.onnx` (`~/.cargo` when `CARGO_HOME` is unset).
+
+`copy-models` copies the selected file to `models/dfn3.onnx` in the Cargo profile directory and its `examples` and `deps` directories, including custom target directories and cross-compilation layouts. It does not imply `download-models`. Set **`ANR_MODEL_PATH` to an absolute local file path before building** to skip downloading, or to use `copy-models` on its own. Changes to that source trigger another copy.
+
+With only `download-models`, `default_model_path()` uses the cached file without copying. `cargo install` can also use this persistent cache after its temporary build directory is removed. To distribute a program to another machine, ship `models/dfn3.onnx` beside it and include the model's licenses/notices; the build-cache path is not portable. The default downloader uses native TLS, like the ORT downloader.
+
+Use `default-features = false` to omit automatic model preparation and the downloader's dependencies. You can still pass an explicit model path or bundle a file beside the executable. A cold cache with `CARGO_NET_OFFLINE=true`, a failed download, or a checksum mismatch fails the build; provide `ANR_MODEL_PATH` for an offline build. Documentation builds on docs.rs skip model preparation.
 
 ### Keep one denoiser per stream
 
@@ -72,7 +82,7 @@ The library does not compensate for model latency and has no end-of-stream flush
 
 If any of these checks fail, the output and processing state stay unchanged. An error during model execution may leave both partly updated; it does not undo work already done.
 
-Without a backend feature, `anr` exports only `NoiseReduction`, `Error`, and `Result`. The default `ort-download-binaries` option does not enable ORT by itself. `NoiseReduction` works as `Box<dyn NoiseReduction>`; `Send` allows moving a reducer to another thread but does not guarantee concurrent calls or nonblocking execution.
+Without a backend feature, `anr` exports `NoiseReduction`, `Error`, `Result`, and `default_model_path`. The default `ort-download-binaries` option does not enable ORT by itself. `NoiseReduction` works as `Box<dyn NoiseReduction>`; `Send` allows moving a reducer to another thread but does not guarantee concurrent calls or nonblocking execution.
 
 ### Adjust the strength
 
@@ -87,10 +97,12 @@ Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive an
 Run this from the project root:
 
 ```text
-cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> <output.f32le>
+cargo run -p anr --features ort --example denoise -- <input.f32le> <output.f32le>
 ```
 
 The input is **48 kHz mono raw audio, not WAV**: four bytes per sample, stored as little-endian IEEE 754 `f32`. The output uses the same format. This command requires the source checkout; installing the crate alone does not give you the whole project.
+
+To select a different model, prepend its path before the input and output arguments.
 
 ### ORT model requirements
 
@@ -113,7 +125,9 @@ Audio and state outputs use preallocated buffers, and ONNX Runtime checks their 
 
 - `ort`: provides `DFN3`. With default features, downloads and copies CPU ONNX Runtime libraries at build time; requires network access and platform support.
 - `gl`, `gles`, `vk`, `wgpu`, `dx`: enable the corresponding compute backend and `anr::<backend>::DFN3`, without enabling ORT.
-- `ort-download-binaries`: the default, weak download option. It does not activate `anr-ort` by itself, so the default crate still depends only on `anr-core`.
+- `ort-download-binaries`: the default, weak runtime-download option. It does not activate `anr-ort` by itself; automatic model preparation is independent of ORT.
+- `download-models`: enabled by default; downloads and caches the pinned DFN3 model unless `ANR_MODEL_PATH` supplies a local file.
+- `copy-models`: enabled by default; copies the selected model beside build outputs, independently of downloading.
 - `ort-load-dynamic`: loads your runtime. Disable defaults to omit the downloader and TLS dependencies. Set `ORT_DYLIB_PATH` to a compatible shared library file before initialization.
 - `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, `ort-xnnpack`: compile support for the corresponding libraries. They do not select a GPU or install drivers or other required libraries.
 
@@ -165,7 +179,7 @@ Check model weights and ONNX files separately for use and redistribution rights.
 
 `anr` 提供六种 DFN3 后端：ORT、OpenGL、GLES、Vulkan、wgpu 和 D3D12。它处理 **48 kHz、单声道 `f32` 采样**，输入输出等长。默认不启用任何后端。启用 `ort` 后可使用 `anr::DFN3`；启用其他后端后，从对应模块使用，例如 `anr::wgpu::DFN3`。
 
-它不读取麦克风、不解码 WAV，也不转换采样率。需要 **最新 Rust stable 工具链**，以及自己准备的模型文件。
+它不读取麦克风、不解码 WAV，也不转换采样率。需要 **最新 Rust stable 工具链**；默认 features 会在构建时下载并准备受支持的 DFN3 模型。
 
 ### 选择后端
 
@@ -202,7 +216,7 @@ use anr::{DFN3, NoiseReduction, Result};
 fn main() -> Result<()> {
     anr::ort::initialize_runtime()?;
     let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    let mut denoiser = DFN3::from_file(&environment, anr::default_model_path()?)?;
     denoiser.set_factor(80.0);
 
     let input = [0.0_f32; DFN3::FRAME_SIZE];
@@ -213,7 +227,17 @@ fn main() -> Result<()> {
 }
 ```
 
-示例输入是静音，使用时换成自己的音频采样。模型路径相对于程序的工作目录；模型不随 Rust 包提供，也不会自动下载。
+示例输入是静音，使用时换成自己的音频采样。`default_model_path()` 先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时准备的模型，不依赖工作目录，也不会在运行时下载。
+
+### 模型下载与复制
+
+`download-models` 和 `copy-models` 均默认启用，但不会启用任何推理后端。下载器从 [固定的 DFN3 Release](https://github.com/lona-cn/anr/releases/download/model-dfn3-fe5eb64fa2e4/dfn3.onnx) 获取模型，校验 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，并复用 `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/dfn3.onnx`；未设置 `CARGO_HOME` 时使用 `~/.cargo`。
+
+`copy-models` 将选中的文件复制到 Cargo profile 目录及其 `examples`、`deps` 目录中的 `models/dfn3.onnx`，支持自定义 target 目录和交叉编译目录。它不会自动启用 `download-models`。**构建前将 `ANR_MODEL_PATH` 设为本地文件的绝对路径**，即可跳过下载，或单独使用 `copy-models`；源文件变化时会重新复制。
+
+仅启用 `download-models` 时，`default_model_path()` 使用缓存文件，不复制模型。`cargo install` 的临时构建目录删除后，也可使用这份持久缓存。向其他机器分发程序时，须把 `models/dfn3.onnx` 放在可执行文件旁，并附上模型许可及通知，不能依赖构建机器的缓存路径。默认下载器与 ORT 下载器一样使用 native TLS。
+
+设置 `default-features = false` 可关闭自动模型准备及下载器依赖，仍可显式指定模型路径，或使用程序旁的模型。缓存缺失且设置了 `CARGO_NET_OFFLINE=true`、下载失败或摘要不符时，构建会报错；离线构建可设置 `ANR_MODEL_PATH`。docs.rs 文档构建跳过模型准备。
 
 ### 每路连续音频各用一个降噪器
 
@@ -231,7 +255,7 @@ fn main() -> Result<()> {
 
 这三项检查失败时，输出和处理状态都不会改变。如果运行模型时才出错，输出和状态可能已经部分更新，不会撤销已经完成的处理。
 
-未启用后端 feature 时，`anr` 只导出 `NoiseReduction`、`Error`、`Result`；默认的 `ort-download-binaries` 不会单独启用 ORT。`NoiseReduction` 支持 `Box<dyn NoiseReduction>`；`Send` 允许跨线程移交实例，不保证并行调用或非阻塞执行。
+未启用后端 feature 时，`anr` 导出 `NoiseReduction`、`Error`、`Result` 和 `default_model_path`；默认的 `ort-download-binaries` 不会单独启用 ORT。`NoiseReduction` 支持 `Box<dyn NoiseReduction>`；`Send` 允许跨线程移交实例，不保证并行调用或非阻塞执行。
 
 ### 调整降噪强度
 
@@ -246,10 +270,12 @@ fn main() -> Result<()> {
 在项目根目录执行：
 
 ```text
-cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> <output.f32le>
+cargo run -p anr --features ort --example denoise -- <input.f32le> <output.f32le>
 ```
 
 输入文件是 **48 kHz、单声道的原始采样，不是 WAV**：每个采样占 4 字节，以小端序保存为 IEEE 754 `f32`。输出格式相同。这个命令需要本项目源码，只安装 Rust 包不会得到整个项目。
+
+需要其他模型时，在输入、输出参数前加上模型路径。
 
 ### ORT 模型要求
 
@@ -272,7 +298,9 @@ ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment
 
 - `ort`：提供 `DFN3`；保留默认 features 时，在构建中下载并复制 CPU 运行库，需要网络和平台支持。
 - `gl`、`gles`、`vk`、`wgpu`、`dx`：启用对应 Compute 后端和 `anr::<backend>::DFN3`，不会启用 ORT。
-- `ort-download-binaries`：默认启用的弱下载选项，不会单独激活 `anr-ort`，所以默认 crate 仍只依赖 `anr-core`。
+- `ort-download-binaries`：默认启用的弱运行库下载选项，不会单独激活 `anr-ort`；自动模型准备与 ORT 无关。
+- `download-models`：默认启用，下载并缓存固定 DFN3 模型；设置 `ANR_MODEL_PATH` 时改用本地文件。
+- `copy-models`：默认启用，将选中的模型复制到构建产物旁，与下载独立控制。
 - `ort-load-dynamic`：加载自备运行库。关闭 defaults 可去掉下载器和 TLS 依赖；初始化前将 `ORT_DYLIB_PATH` 设为兼容的共享库文件。
 - `ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack`：编入对应库的支持，不会自动选择 GPU，也不会安装驱动或其他必需的库。
 

@@ -151,15 +151,24 @@ fn denoise(
     verbose: bool,
     cancelled: Arc<AtomicBool>,
 ) -> Result<u8> {
-    let (jobs, mut destinations) = plan_jobs(args)?;
+    let default_model;
+    let model = match args.model.as_deref() {
+        Some(model) => model,
+        None => {
+            default_model =
+                anr::default_model_path().context("未找到默认 DFN3 模型；可用 --model 指定文件")?;
+            default_model.as_path()
+        }
+    };
+    let (jobs, mut destinations) = plan_jobs(args, model)?;
     cancel::check(&cancelled)?;
     // Initialize once before creating any output directory or transaction.
-    let mut engines = EnginePool::new(&args.model, args.backend, args.provider, args.strength)?;
+    let mut engines = EnginePool::new(model, args.backend, args.provider, args.strength)?;
     if let Some(dir) = &args.output_dir {
         fs::create_dir_all(dir).with_context(|| format!("无法创建输出目录 {}", dir.display()))?;
         // Creating a previously missing parent can resolve `..` or aliases
         // differently. Recheck the same jobs before opening any output.
-        destinations = validate_destinations(args, &jobs)?;
+        destinations = validate_destinations(args, &jobs, model)?;
     }
     let raw_spec = args
         .input_rate
@@ -280,7 +289,7 @@ fn usage(message: String) -> anyhow::Error {
     clap::Error::raw(clap::error::ErrorKind::ArgumentConflict, message).into()
 }
 
-fn plan_jobs(args: &DenoiseArgs) -> Result<(Vec<Job>, DestinationGuard)> {
+fn plan_jobs(args: &DenoiseArgs, model: &Path) -> Result<(Vec<Job>, DestinationGuard)> {
     let mut jobs = Vec::with_capacity(args.inputs.len());
     for input in &args.inputs {
         let (output, format) = if let Some(output) = &args.output {
@@ -305,11 +314,15 @@ fn plan_jobs(args: &DenoiseArgs) -> Result<(Vec<Job>, DestinationGuard)> {
             format,
         });
     }
-    let destinations = validate_destinations(args, &jobs)?;
+    let destinations = validate_destinations(args, &jobs, model)?;
     Ok((jobs, destinations))
 }
 
-fn validate_destinations(args: &DenoiseArgs, jobs: &[Job]) -> Result<DestinationGuard> {
+fn validate_destinations(
+    args: &DenoiseArgs,
+    jobs: &[Job],
+    model: &Path,
+) -> Result<DestinationGuard> {
     let mut guard = DestinationGuard {
         protected_paths: HashSet::with_capacity(args.inputs.len() + 1),
         protected_files: HashSet::with_capacity(args.inputs.len() + 1),
@@ -319,8 +332,9 @@ fn validate_destinations(args: &DenoiseArgs, jobs: &[Job]) -> Result<Destination
     for input in args
         .inputs
         .iter()
-        .filter(|input| input.as_path() != Path::new("-"))
-        .chain(std::iter::once(&args.model))
+        .map(PathBuf::as_path)
+        .filter(|input| *input != Path::new("-"))
+        .chain(std::iter::once(model))
     {
         guard.protected_paths.insert(identity(input)?);
         if let Some(file) = existing_file_id(input)? {

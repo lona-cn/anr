@@ -1,10 +1,13 @@
 //! Audio noise reduction through a backend-independent interface.
 //!
-//! The default build exports only [`NoiseReduction`], [`Error`], and [`Result`].
-//! Enable the `ort` feature for `DFN3` and the `ort` backend module.
-//! Enable `gl`, `gles`, `vk`, `wgpu` or `dx` for a model-specific native compute backend.
+//! No inference backend is enabled by default. The default `download-models` and
+//! `copy-models` features prepare DFN3 for [`default_model_path`].
+//! Enable `ort` for `DFN3`, or `gl`, `gles`, `vk`, `wgpu`, or `dx` for a native backend.
 
 pub use anr_core::{Error, NoiseReduction, Result};
+
+mod models;
+pub use models::default_model_path;
 
 /// ONNX Runtime backend and its runtime configuration APIs.
 #[cfg(feature = "ort")]

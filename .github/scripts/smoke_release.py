@@ -130,7 +130,7 @@ def verify_bundle(root):
         if name == "dfn3.onnx":
             require(actual == MODEL_SHA256, "bundle does not contain the specified real DFN3 model")
     require(seen == MODEL_FILES, f"bundled model manifest is missing: {', '.join(sorted(MODEL_FILES - seen))}")
-    return executable, model_directory / "dfn3.onnx"
+    return executable
 
 
 def invoke(executable, cwd, environment, *arguments, audio=None, timeout=60):
@@ -156,7 +156,7 @@ def check_samples(output, sample_count, label):
     return samples
 
 
-def smoke(executable, model, control_model, unrelated):
+def smoke(executable, control_model, unrelated):
     environment = {key: value for key, value in os.environ.items() if key.upper() not in SEARCH_ENVIRONMENT}
 
     def run(*arguments, **options):
@@ -204,7 +204,7 @@ def smoke(executable, model, control_model, unrelated):
     real_output = run(
         "denoise", "-", "--input-format", "f32le", "--input-rate", "48000",
         "--input-channels", "1", "--output", "-", "--output-format", "f32le",
-        "--model", str(model), "--strength", "100", audio=real_audio, timeout=180,
+        "--strength", "100", audio=real_audio, timeout=180,
     )
     check_samples(real_output, count, "bundled real DFN3")
 
@@ -223,11 +223,11 @@ def main():
         extracted = scratch / "解压 bundle"
         extracted.mkdir()
         root = extract_bundle(archive, extracted)
-        executable, model = verify_bundle(root)
+        executable = verify_bundle(root)
         unrelated = scratch / "无关工作目录 with spaces"
         unrelated.mkdir()
-        smoke(executable, model, control_model, unrelated)
-    print("Release ZIP smoke passed: control-state values, stereo WAV, and real DFN3 length/finite output.")
+        smoke(executable, control_model, unrelated)
+    print("Release ZIP smoke passed: control-state values, stereo WAV, and automatic bundled DFN3 inference.")
 
 
 if __name__ == "__main__":

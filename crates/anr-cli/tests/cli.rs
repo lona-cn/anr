@@ -217,6 +217,77 @@ fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32]) {
     writer.finalize().unwrap();
 }
 
+#[cfg(feature = "ort")]
+fn relocated_command(directory: &Path) -> Command {
+    let executable = Path::new(env!("CARGO_BIN_EXE_anr"));
+    let destination = directory.join(executable.file_name().unwrap());
+    std::fs::copy(executable, &destination).unwrap();
+    for entry in std::fs::read_dir(executable.parent().unwrap()).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name_text = name.to_string_lossy();
+        if name_text.starts_with("onnxruntime") || name_text.starts_with("libonnxruntime") {
+            std::fs::copy(entry.path(), directory.join(name)).unwrap();
+        }
+    }
+    Command::new(destination)
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn denoise_discovers_model_beside_executable_not_in_working_directory() {
+    let bundle = tempfile::tempdir().unwrap();
+    let working = tempfile::tempdir().unwrap();
+    std::fs::create_dir(bundle.path().join("models")).unwrap();
+    std::fs::copy(
+        model(working.path()),
+        bundle.path().join("models/dfn3.onnx"),
+    )
+    .unwrap();
+    let input = working.path().join("input.wav");
+    let output = working.path().join("output.f32le");
+    write_wav(&input, 48_000, 1, &[0.125; 480]);
+    let result = run(
+        relocated_command(bundle.path())
+            .current_dir(working.path())
+            .arg("denoise")
+            .arg(&input)
+            .arg("--output")
+            .arg(&output)
+            .args(["--strength", "100", "--quiet"]),
+        vec![],
+        false,
+    );
+    assert_code(&result, 0);
+    assert_bytes(&std::fs::read(output).unwrap(), &bytes(&[0.125; 480]));
+}
+
+#[cfg(feature = "ort")]
+#[test]
+fn automatically_selected_model_is_protected_from_output_overwrite() {
+    let bundle = tempfile::tempdir().unwrap();
+    let working = tempfile::tempdir().unwrap();
+    std::fs::create_dir(bundle.path().join("models")).unwrap();
+    let selected_model = bundle.path().join("models/dfn3.onnx");
+    let original = std::fs::read(model(working.path())).unwrap();
+    std::fs::write(&selected_model, &original).unwrap();
+    let input = working.path().join("input.wav");
+    write_wav(&input, 48_000, 1, &[0.125; 480]);
+    let result = run(
+        relocated_command(bundle.path())
+            .current_dir(working.path())
+            .arg("denoise")
+            .arg(&input)
+            .arg("--output")
+            .arg(&selected_model)
+            .args(["--output-format", "f32le", "--overwrite"]),
+        vec![],
+        false,
+    );
+    assert_code(&result, 2);
+    assert_eq!(std::fs::read(selected_model).unwrap(), original);
+}
+
 #[cfg(any(
     feature = "ort",
     feature = "gl",

@@ -63,8 +63,12 @@ pub struct DenoiseArgs {
         value_name = "DIR"
     )]
     pub output_dir: Option<PathBuf>,
-    #[arg(long, value_name = "ONNX")]
-    pub model: PathBuf,
+    #[arg(
+        long,
+        value_name = "ONNX",
+        help = "模型路径；省略时使用程序旁或构建时准备的 DFN3 模型"
+    )]
+    pub model: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = Backend::Ort)]
     pub backend: Backend,
     #[arg(long, value_enum, help = "仅适用于 ORT 后端；省略时 ORT 默认 cpu")]

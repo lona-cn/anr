@@ -6,7 +6,7 @@
 
 `anr-cli` installs the `anr` command for denoising audio files, serial batches, and stdin/stdout audio. It calls DFN3 through `anr`: ONNX Runtime by default, or model-specific OpenGL, OpenGL ES, Vulkan, wgpu, and Direct3D 12 Compute backends without ORT. The CLI handles decoding, band-limited resampling, and multiple channels. Runtime use requires neither FFmpeg nor Python.
 
-Source builds require the **latest stable Rust toolchain**. Rust packages and `cargo install` do not include or automatically download a model; application ZIPs bundle the pinned model and CPU runtime. `--model` is always required and no checkout-relative model is selected automatically. The ORT backend requires exactly these three inputs and three outputs, all `f32`:
+Source builds require the **latest stable Rust toolchain**. Default features download and prepare the pinned DFN3 model at build time, including with `cargo install`; application ZIPs bundle that model and CPU runtime. `--model` is optional: an explicit path wins, otherwise the CLI checks `models/dfn3.onnx` beside the executable and then the model source recorded at build time. No checkout-relative path is assumed. The ORT backend requires exactly these three inputs and three outputs, all `f32`:
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -28,10 +28,10 @@ The release workflow produces `anr-<version-or-commit>-<target>.zip` for Windows
 Extract everything, enter the extracted directory, and run:
 
 ```sh
-./anr denoise input.wav --output clean.wav --model models/dfn3.onnx
+./anr denoise input.wav --output clean.wav
 ```
 
-On Windows use `.\anr.exe`. `--model` remains required; it is not searched for automatically. Keep the native shared libraries beside the executable. No `ORT_DYLIB_PATH` setting is needed for the bundled runtime; remove an old override if you want to use the bundled copy.
+On Windows use `.\anr.exe`. The bundled model is found automatically, regardless of the working directory. Keep the native shared libraries beside the executable. No `ORT_DYLIB_PATH` setting is needed for the bundled runtime; remove an old override if you want to use the bundled copy.
 
 Windows may need the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The Linux package targets glibc and is built on Ubuntu 24.04, not musl or arbitrary older glibc. macOS packages are ad-hoc signed, not notarized; follow the system's approval prompts for downloaded applications. GPU providers are not bundled. Check attached `SHA256SUMS` before use.
 
@@ -47,7 +47,7 @@ anr backends --json
 
 The executable is `anr`, not `anr-cli`. Add the installation directory to `PATH`, or run the executable by its full path. To install version `0.1.1` from crates.io, use `cargo install anr-cli --version 0.1.1 --locked`.
 
-The default `ort-download-binaries` feature enables the ORT backend and downloads the prebuilt CPU runtime. It requires network access, a target toolchain, and platform support:
+The default features are `ort-download-binaries`, `download-models`, and `copy-models`: they enable the ORT backend, download the prebuilt CPU runtime and pinned model, and copy the model beside build outputs. The first build requires network access, a target toolchain, and platform support:
 
 - Windows: the MSVC C++ toolchain and Windows SDK.
 - Linux: C/C++ linking tools, `pkg-config`, and OpenSSL development files, such as Ubuntu's `libssl-dev`.
@@ -59,7 +59,7 @@ For example, once you have a compatible CPU `libonnxruntime.dylib` on Intel macO
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
-cargo install --path crates/anr-cli --locked --no-default-features --features ort-load-dynamic
+cargo install --path crates/anr-cli --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
 anr backends --json
 ```
 
@@ -68,19 +68,23 @@ Replace that path with a real file and keep the setting for later runs. `backend
 Denoise a file, process a batch, or inspect a recording:
 
 ```text
-anr denoise voice.wav --output clean.wav --model /path/to/dfn3.onnx
-anr denoise a.flac b.mp3 --output-dir cleaned --model /path/to/dfn3.onnx
+anr denoise voice.wav --output clean.wav
+anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav
 anr inspect voice.wav --json
 ```
 
-Replace `/path/to/dfn3.onnx` with a model you're allowed to use. Quoted Windows paths work too. Relative paths are resolved from the command's working directory, not the executable or source directory. `inspect` does not load a model. `backends` reports what was compiled in; it does not prove a runtime or GPU is ready to use.
+Use `--model /path/to/dfn3.onnx` to select a different model you're allowed to use. Quoted Windows paths work too. Explicit relative paths are resolved from the command's working directory; automatic model discovery is relative to the executable, then the build-time source. `inspect` does not load a model. `backends` reports what was compiled in; it does not prove a runtime or GPU is ready to use.
+
+`download-models` caches the verified model under `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/` (`~/.cargo` by default). `copy-models` independently copies it to `models/dfn3.onnx` in the Cargo profile, examples, and tests directories. Set `ANR_MODEL_PATH` to an absolute local file path **before building** to skip model downloading, or to use `copy-models` alone. A download-only build and `cargo install` can use the persistent source path without a bundled copy. For distribution to another machine, include the model and its applicable licenses/notices; the original build cache is not portable. No model is downloaded at runtime.
+
+Disable default features to omit automatic model preparation and its downloader dependencies. Then pass `--model`, provide a bundled model, or opt back into the individual model features. A cold cache with `CARGO_NET_OFFLINE=true` fails rather than downloading; use `ANR_MODEL_PATH` for offline builds. See the [model preparation guide](../anr/README.md#model-download-and-copying).
 
 ### Arguments and batches
 
 ```text
-anr denoise INPUT... --output PATH --model MODEL [OPTIONS]
-anr denoise INPUT... --output-dir DIR --model MODEL [OPTIONS]
+anr denoise INPUT... --output PATH [--model MODEL] [OPTIONS]
+anr denoise INPUT... --output-dir DIR [--model MODEL] [OPTIONS]
 anr inspect INPUT [--json]
 anr backends [--json]
 ```
@@ -90,7 +94,7 @@ anr backends [--json]
 | `INPUT...` | Explicit file paths. For a single input, `-` means stdin. The program does not scan directories recursively or expand globs itself. |
 | `--output PATH` | Destination for one input; `-` means stdout. Cannot be combined with `--output-dir`. |
 | `--output-dir DIR` | Processes files serially, using each input's stem with `.wav`, or `.f32le` when raw output is selected. Does not rename colliding outputs. |
-| `--model PATH` | Required model path. |
+| `--model PATH` | Optional model override. Otherwise uses the bundled or build-time model; an explicit invalid path is an error, not a fallback. |
 | `--backend ort\|gl\|gles\|vk\|wgpu\|dx` | Defaults to `ort`. Each compute backend requires its matching Cargo feature and the exact supported model below. |
 | `--provider cpu` | ORT only; omitted means `cpu` for ORT. Other providers require matching features and runtime support. Any explicit `--provider` with a compute backend is an argument error. |
 | `--strength 80` | Defaults to 80. Accepts finite values in `0..=100`; rejects NaN, infinity, and out-of-range values rather than clamping them. |
@@ -223,7 +227,7 @@ Dependencies and model weights keep their own licenses. The supplied model asset
 
 `anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择不依赖 ORT 的模型专用 OpenGL、OpenGL ES、Vulkan、wgpu 和 Direct3D 12 Compute 后端。CLI 自行完成解码、带限重采样和多声道处理，运行时不需要 FFmpeg 或 Python。
 
-源码构建需要 **最新 Rust stable 工具链**。Rust crate / `cargo install` 不附带或自动下载模型；应用 ZIP 附带固定模型和 CPU 运行库。`--model` 始终必填，不会自动选用源码目录中的模型。ORT 后端只接受下表三个输入和三个输出，均为 `f32`：
+源码构建需要 **最新 Rust stable 工具链**。默认 features 会在构建时下载并准备固定 DFN3 模型，`cargo install` 也适用；应用 ZIP 附带同一模型和 CPU 运行库。`--model` 可省略：显式路径优先，否则先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时记录的模型源文件，不假定源码目录或当前工作目录。ORT 后端只接受下表三个输入和三个输出，均为 `f32`：
 
 | 方向 | 名称 | 运行时的大小 |
 | --- | --- | --- |
@@ -245,10 +249,10 @@ Release workflow 在平台检查通过后，为 Windows x64、Linux x64、macOS 
 完整解压，进入解压目录后运行：
 
 ```sh
-./anr denoise input.wav --output clean.wav --model models/dfn3.onnx
+./anr denoise input.wav --output clean.wav
 ```
 
-Windows 使用 `.\anr.exe`。`--model` 仍然必填，不会自动查找模型；随包共享库需与可执行文件保持同目录。默认不需设置 `ORT_DYLIB_PATH`，若以前设置过它，想用随包运行库时应先移除旧的覆盖值。
+Windows 使用 `.\anr.exe`。模型从可执行文件旁自动查找，不受当前工作目录影响；随包共享库需与可执行文件保持同目录。默认不需设置 `ORT_DYLIB_PATH`，若以前设置过它，想用随包运行库时应先移除旧的覆盖值。
 
 Windows 可能需要安装微软 [Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。Linux 包在 Ubuntu 24.04 构建，使用 glibc，不等于支持 musl 或任意旧 glibc。macOS 包使用 ad-hoc 签名，未公证；下载后按系统提示允许打开。不包含 GPU provider。使用前核对 Release 附带的 `SHA256SUMS`。
 
@@ -264,7 +268,7 @@ anr backends --json
 
 二进制名是 `anr`，不是 `anr-cli`。把安装目录加入 `PATH`，或用完整路径运行可执行文件。从 crates.io 安装 `0.1.1` 可使用 `cargo install anr-cli --version 0.1.1 --locked`。
 
-默认 feature `ort-download-binaries` 会启用 ORT 后端并下载预编译 CPU 运行库，需要网络、目标工具链和平台支持：
+默认 features 为 `ort-download-binaries`、`download-models` 和 `copy-models`：启用 ORT 后端，下载预编译 CPU 运行库和固定模型，并将模型复制到构建产物旁。首次构建需要网络、目标工具链和平台支持：
 
 - Windows：MSVC C++ 工具链和 Windows SDK。
 - Linux：C/C++ 链接工具链、`pkg-config` 和 OpenSSL 开发文件，例如 Ubuntu 的 `libssl-dev`。
@@ -276,7 +280,7 @@ anr backends --json
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
-cargo install --path crates/anr-cli --locked --no-default-features --features ort-load-dynamic
+cargo install --path crates/anr-cli --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
 anr backends --json
 ```
 
@@ -285,19 +289,23 @@ anr backends --json
 处理单文件、批处理和信息查询：
 
 ```text
-anr denoise voice.wav --output clean.wav --model /path/to/dfn3.onnx
-anr denoise a.flac b.mp3 --output-dir cleaned --model /path/to/dfn3.onnx
+anr denoise voice.wav --output clean.wav
+anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav
 anr inspect voice.wav --json
 ```
 
-把 `/path/to/dfn3.onnx` 换成自己有权使用的实际模型路径，Windows 同样可用带引号的本机路径。相对路径均相对于启动命令时的工作目录，不相对于可执行文件或源码目录。`inspect` 不加载模型；`backends` 只说明编译时加入了哪些支持，不证明运行库或 GPU 已能使用。
+需要其他模型时使用 `--model /path/to/dfn3.onnx`，替换为自己有权使用的实际路径；Windows 同样可用带引号的本机路径。显式相对路径以启动命令时的工作目录为准，自动查找则先以可执行文件位置为准，再使用构建时记录的路径。`inspect` 不加载模型；`backends` 只说明编译时加入了哪些支持，不证明运行库或 GPU 已能使用。
+
+`download-models` 将通过摘要校验的模型缓存到 `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/`，默认 Cargo home 为 `~/.cargo`。`copy-models` 独立负责复制，在 Cargo profile、示例和测试目录下生成 `models/dfn3.onnx`。**构建前**将 `ANR_MODEL_PATH` 设为本地文件的绝对路径，即可跳过模型下载，或单独使用 `copy-models`。仅下载的构建和 `cargo install` 可使用持久源路径，不要求程序旁已有副本。向其他机器分发时应附带模型及适用许可、通知，不能依赖原构建机器的缓存。运行时不下载模型。
+
+关闭 default features 可去掉自动模型准备及下载器依赖，之后需传入 `--model`、随程序提供模型，或按需重新启用模型 features。缓存缺失且设置 `CARGO_NET_OFFLINE=true` 时会报错而非联网；离线构建可设置 `ANR_MODEL_PATH`。详情见 [模型准备说明](../anr/README.md#模型下载与复制)。
 
 ### 参数与批处理
 
 ```text
-anr denoise INPUT... --output PATH --model MODEL [OPTIONS]
-anr denoise INPUT... --output-dir DIR --model MODEL [OPTIONS]
+anr denoise INPUT... --output PATH [--model MODEL] [OPTIONS]
+anr denoise INPUT... --output-dir DIR [--model MODEL] [OPTIONS]
 anr inspect INPUT [--json]
 anr backends [--json]
 ```
@@ -307,7 +315,7 @@ anr backends [--json]
 | `INPUT...` | 明确列出的文件路径；单输入时可用 `-` 表示 stdin。程序不递归扫描目录，也不自行展开 glob。 |
 | `--output PATH` | 单输入的目标文件；`-` 表示 stdout。与 `--output-dir` 互斥。 |
 | `--output-dir DIR` | 逐个处理文件，按输入文件名去掉扩展名后生成 `.wav`，明确选择 raw 时生成 `.f32le`。同名结果不自动改名。 |
-| `--model PATH` | 必填的模型路径。 |
+| `--model PATH` | 可选的模型覆盖路径；省略时使用随程序或构建时准备的模型。显式路径无效时直接报错，不改用默认模型。 |
 | `--backend ort\|gl\|gles\|vk\|wgpu\|dx` | 默认 `ort`。各 Compute 后端需要对应 Cargo feature 和后文说明的固定模型。 |
 | `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应 feature 和运行环境。任何 Compute 后端与显式 `--provider` 同用均为参数错误。 |
 | `--strength 80` | 默认 80；必须是 `0..=100` 的有限数值，拒绝 NaN、无穷和越界值，不静默修正。 |

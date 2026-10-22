@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- `anr` 和 CLI 默认启用 `download-models`、`copy-models`：构建时从固定 GitHub Release 下载 DFN3，校验 SHA-256 并持久缓存，独立控制向 profile、examples、tests 构建目录复制模型；可用构建环境变量 `ANR_MODEL_PATH` 选择本地文件，关闭 defaults 则不引入模型下载器依赖。
+- 新增 `anr::default_model_path()`，先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时记录的源路径。CLI 的 `--model` 改为可选，显式路径优先；自动选择的模型同样受输出覆盖保护。raw 示例也支持省略模型路径，运行时不下载模型。
 - 新增工作区工具 `anr-bench`，串行比较 `anr-gl`、`anr-vk`、`anr-dx` 的连续帧推理性能；共用固定种子的 48 kHz 单声道输入，初始化单独计时，支持预热、后端选择、降噪强度和 JSON。报告同步调用延迟、nearest-rank P50/P95/P99、FPS、RTF 及超过 10 ms 的帧数；任一后端失败仍继续测试其余后端，并返回非零退出码。默认构建不依赖 ORT，不改动原生推理实现，也不加入应用 Release ZIP。
 - `anr-bench` 增加可选的 `ort-cuda`、`ort-tensorrt`、`ort-directml` 后端，以及 `ort-download-binaries` / `ort-load-dynamic` 运行库来源选项；共用一个 ORT Environment，缺失运行库或 provider 作为单后端错误返回，新增 opt-in 硬件回归。
 - 统一项目 ORT 默认策略：允许不支持或按 ORT 分配规则更适合 CPU 的算子使用 CPU kernel，CLI 和 benchmark 不再强制全算子 GPU；库保留调用方 Session 设置，provider 注册或初始化失败仍报错。benchmark 用 `cpu_fallback_allowed` 标注执行策略，耗时包含 CPU 算子及设备传输，不冒充纯 GPU kernel 时间。
@@ -48,4 +50,4 @@
 - 发布先上传到 draft，全部 ZIP 和 SHA256SUMS 核对完成后才公开；不移动 tag，不覆盖已公开版本或同名异摘要资产。使用内置 `GITHUB_TOKEN`，仅发布 job 授予 Contents 写入，无需专用 Secret；历史 workflow 提交若触发额外授权限制，明确失败而不替换目标提交。
 - 发布前通过精确 Git ref 判断 tag 是否存在，避免首次预发布被不存在 ref 的 `422` 响应阻断；已有 lightweight/annotated tag 按完整 `refs/tags/…` 解析并校验提交。
 
-Rust 包仍不打包或自动下载模型，工作区仍可使用 `models/dfn3.onnx`。GitHub 模型资产与应用 ZIP 的模型分发是单独的明确授权范围，不代表任意来源模型的音质、性能或许可保证。
+完整模型不打包进 Rust 源码包；当前默认构建通过上述 features 自动准备模型，工作区仍可显式使用 `models/dfn3.onnx`。固定 GitHub 模型资产与应用 ZIP 的分发授权不代表任意来源模型的音质、性能或许可保证。

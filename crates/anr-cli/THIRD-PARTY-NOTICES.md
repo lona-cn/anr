@@ -49,6 +49,6 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 
 ## 模型权重与测试控制图
 
-DFN3 模型权重不随 CLI crate / `cargo install` 提供，CLI 本身不自动下载。GitHub 应用 ZIP 则明确包含 `models/dfn3.onnx`，其固定资产来自 [模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4)。维护者已确认有权将 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 对应的文件按 **MIT OR Apache-2.0** 分发；两份许可、NOTICE 和资产清单随 ZIP 的 `models/` 一起提供。其他权重、训练数据或导出文件的使用与分发权仍按实际来源确认，不能由 [DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可推断。
+DFN3 模型内容不打包进 Rust crate；默认 `download-models` 在构建时从 [固定模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 下载并校验，`copy-models` 将模型复制到构建产物旁，`cargo install` 可继续使用持久缓存。关闭 defaults 可禁用下载，运行时不会联网获取模型。GitHub 应用 ZIP 明确包含 `models/dfn3.onnx`。维护者已确认有权将 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 对应的文件按 **MIT OR Apache-2.0** 分发；两份许可、NOTICE 和资产清单随 ZIP 的 `models/` 一起提供，也可从该模型 Release 获取。`copy-models` 只复制模型文件；自行分发构建产物时，应另外携带适用许可及通知。其他权重、训练数据或导出文件的使用与分发权仍按实际来源确认，不能由 [DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可推断。
 
-`tests/fixtures` 中本项目自制的微型 ONNX 控制图用于验证输入输出、状态和错误处理，不含 DFN3 权重，也不宣称具有降噪能力。CI 同时使用这些控制图和经 Release 摘要校验的真实模型；模型仍不进入 Rust crate，仅进入明确包含它的 GitHub 应用 ZIP。
+`tests/fixtures` 中本项目自制的微型 ONNX 控制图用于验证输入输出、状态和错误处理，不含 DFN3 权重，也不宣称具有降噪能力。CI 同时使用这些控制图和经 Release 摘要校验的真实模型；完整模型仍不进入 Rust 源码包。

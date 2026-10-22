@@ -28,6 +28,9 @@ dependencies = [
  "anr-ort",
  "anr-vk",
  "anr-wgpu",
+ "sha2",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]

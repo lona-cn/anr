@@ -8,7 +8,7 @@
 
 The library takes **48 kHz, mono `f32` samples**. For audio files, resampling, and multiple channels, use [`anr-cli`](crates/anr-cli/README.md). The CLI handles files, batches, and raw PCM streams; it does not provide microphone access, virtual audio devices, or drivers.
 
-Source builds require the **latest stable Rust toolchain**. Rust packages and `cargo install` do not include or automatically download a model. GitHub application ZIPs use the matched DFN3 model described below; a model with the same name is not necessarily compatible, so check its inputs and outputs before substituting one.
+Source builds require the **latest stable Rust toolchain**. Default features download, verify, cache, and copy the supported DFN3 model at build time, including with `cargo install`; the model bytes are not embedded in Rust packages. GitHub application ZIPs bundle the same model. Check inputs and outputs before substituting another export.
 
 ### Choose a backend for the Rust library
 
@@ -28,26 +28,26 @@ In `Cargo.toml`, list the backends your program needs under `features`. If you l
 The [GitHub application releases](https://github.com/lona-cn/anr/releases) are built as native ZIPs with the CLI, CPU runtime, `models/dfn3.onnx`, and license files. Extract the whole ZIP and run from its directory:
 
 ```sh
-./anr denoise voice.wav --output clean.wav --model models/dfn3.onnx
+./anr denoise voice.wav --output clean.wav
 ```
 
-On Windows, use `.\anr.exe` instead of `./anr`. The `--model` argument is still required. Application ZIPs appear only after the release workflow passes; the separate [model asset release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains the model, not a CLI build. See the [CLI distribution notes](crates/anr-cli/README.md) for system runtime requirements.
+On Windows, use `.\anr.exe` instead of `./anr`. The CLI finds the bundled model beside the executable; `--model PATH` overrides it. Application ZIPs appear only after the release workflow passes; the separate [model asset release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains the model, not a CLI build. See the [CLI distribution notes](crates/anr-cli/README.md) for system runtime requirements.
 
 Install the CLI from the workspace root. The executable is called `anr`. This default build uses ORT's prebuilt libraries where available; on Intel macOS, follow the [CLI instructions](crates/anr-cli/README.md) for supplying your own runtime instead.
 
 ```text
 cargo install --path crates/anr-cli --locked
-anr denoise voice.wav --output clean.wav --model /path/to/dfn3.onnx
-anr denoise a.flac b.mp3 --output-dir cleaned --model /path/to/dfn3.onnx
+anr denoise voice.wav --output clean.wav
+anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav --json
 anr backends --json
 ```
 
-Replace the model path with your own. Once installed, `anr` does not need to run from the source directory. It uses CPU ORT by default, preserves the input sample rate, channel count, and frame count unless you request otherwise, and writes WAV or raw f32le.
+No manual model download or `--model` argument is needed with the default build. An explicit `--model PATH` still selects your own file. Once installed, `anr` does not need to run from the source directory. It uses CPU ORT by default, preserves the input sample rate, channel count, and frame count unless you request otherwise, and writes WAV or raw f32le.
 
 See the [CLI README](crates/anr-cli/README.md) for raw stdin/stdout, how output files are saved, execution providers, model latency, and binary-safe shell examples.
 
-The default build may download ONNX Runtime, so it needs network access and a supported platform toolchain. Intel macOS is not covered by the current default ORT prebuilt distribution. CI is configured to use Rust stable on native Windows x64, Linux x64, and macOS arm64/x64; the configuration itself is not evidence that those jobs have passed. See the CLI README for recorded local results and platforms not yet tested.
+The default build downloads the model and may download ONNX Runtime, so the first build needs network access and a supported platform toolchain. Intel macOS is not covered by the current default ORT prebuilt distribution. CI is configured to use Rust stable on native Windows x64, Linux x64, and macOS arm64/x64; the configuration itself is not evidence that those jobs have passed. See the CLI README for recorded local results and platforms not yet tested.
 
 For a source build without ONNX Runtime, run the GLES backend directly from the workspace:
 
@@ -74,7 +74,7 @@ use anr::{DFN3, NoiseReduction, Result};
 fn main() -> Result<()> {
     anr::ort::initialize_runtime()?;
     let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    let mut denoiser = DFN3::from_file(&environment, anr::default_model_path()?)?;
     denoiser.set_factor(80.0);
 
     // Replace this silence with your own 48 kHz mono samples.
@@ -117,10 +117,10 @@ Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive an
 The following example uses ORT; run it from the workspace root. For compute backends and audio containers, use the CLI with an explicit `--backend` instead.
 
 ```text
-cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> <output.f32le>
+cargo run -p anr --features ort --example denoise -- <input.f32le> <output.f32le>
 ```
 
-The input is **48 kHz mono raw audio, not WAV**: four bytes per sample, stored as little-endian IEEE 754 `f32`. The output uses the same format. In this checkout, `<model.onnx>` can be `models/dfn3.onnx`; that file is not included in the Rust packages. Check that the model meets the requirements below and that you have permission to use it.
+The input is **48 kHz mono raw audio, not WAV**: four bytes per sample, stored as little-endian IEEE 754 `f32`. The output uses the same format. The default model is found automatically; prepend `<model.onnx>` to the arguments to select another file. Check that a replacement meets the requirements below and that you have permission to use it.
 
 ### ORT model inputs and outputs
 
@@ -152,9 +152,13 @@ Adding `anr` alone does not enable model execution. Choose the Cargo features yo
 | `wgpu` | Provides `anr::wgpu::DFN3`, using wgpu hardware adapters without ORT. |
 | `dx` | Provides `anr::dx::DFN3`, using native Windows Direct3D 12 compute, not DirectML or wgpu. |
 | `ort-download-binaries` | Default download option; takes effect only when `ort` is enabled and does not enable a backend by itself. |
+| `download-models` | Enabled by default. Downloads and verifies the pinned DFN3 model into a persistent Cargo cache; `ANR_MODEL_PATH` overrides the build-time source. |
+| `copy-models` | Enabled by default. Copies that model to `models/dfn3.onnx` beside Cargo binaries, examples, and tests; does not enable downloading by itself. |
 | `ort-load-dynamic` | Loads your runtime. Use `default-features = false` with this feature to omit the downloader and its TLS dependencies; set `ORT_DYLIB_PATH` to the shared library file. |
 | `ort-cuda` / `ort-tensorrt` | Compiles support for CUDA / TensorRT. |
 | `ort-directml` / `ort-coreml` / `ort-xnnpack` | Compiles support for DirectML / CoreML / XNNPACK. |
+
+`anr::default_model_path()` first checks beside the executable, then the absolute source path recorded at build time. It never downloads at runtime. Disable defaults to omit model downloading, or enable only `copy-models` and set `ANR_MODEL_PATH` to an absolute local file path. Cache location, offline builds, and distribution requirements are in the [model preparation guide](crates/anr/README.md#model-download-and-copying).
 
 The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default prebuilt runtime is 1.31.0; compatible self-provided API-27 runtimes, including 1.28.0, can also be used. Set `ORT_DYLIB_PATH` before initialization; it points to a library file, not a directory.
 
@@ -253,7 +257,7 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 
 `anr-dfn3` and the five compute crates use this root README in their source packages. `anr-core`, `anr-ort`, the facade, and the CLI each have their own README. The compute constructor takes only a model path; an ORT environment or `Session` is never passed to it.
 
-`NoiseReduction` works as `Box<dyn NoiseReduction>`, and reducers can be moved between threads (`Send`). The library crates do not manage audio devices, decode WAV, resample, or split multiple channels. The CLI handles file decoding, resampling, and channels outside the library. No package downloads models automatically.
+`NoiseReduction` works as `Box<dyn NoiseReduction>`, and reducers can be moved between threads (`Send`). The library crates do not manage audio devices, decode WAV, resample, or split multiple channels. The CLI handles file decoding, resampling, and channels outside the library. Automatic model preparation is provided by the `anr` facade, not the individual backend crates.
 
 ### Automated GitHub releases
 
@@ -287,7 +291,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version changes and [CI and Release](.githu
 
 库接口处理 **48 kHz、单声道的 `f32` 采样**。音频文件解码、采样率转换和多声道处理可以交给 [`anr-cli`](crates/anr-cli/README.md)。CLI 用于文件、批处理和 raw PCM 流，不提供麦克风访问、虚拟声卡或驱动。
 
-从源码构建需要 **最新 Rust stable 工具链**。Rust 包和 `cargo install` 不附带或自动下载模型；GitHub 应用 ZIP 则附带下述已匹配的 DFN3 模型。替换模型前仍需核对输入输出，名称相同不代表接口相同。
+从源码构建需要 **最新 Rust stable 工具链**。默认 features 会在构建时下载、校验、缓存并复制受支持的 DFN3 模型，`cargo install` 也适用；模型内容不嵌入 Rust 包。GitHub 应用 ZIP 附带同一模型。替换模型前仍需核对输入输出，名称相同不代表接口相同。
 
 ### 给 Rust 库选择后端
 
@@ -307,26 +311,26 @@ anr = { version = "0.1.1", default-features = false, features = ["wgpu"] }
 [GitHub 应用 Release](https://github.com/lona-cn/anr/releases) 由 CI 生成原生 ZIP，包含 CLI、CPU 运行库、`models/dfn3.onnx` 和许可文件。完整解压后，进入解压目录运行：
 
 ```sh
-./anr denoise voice.wav --output clean.wav --model models/dfn3.onnx
+./anr denoise voice.wav --output clean.wav
 ```
 
-Windows 将 `./anr` 换成 `.\anr.exe`；`--model` 仍为必填。应用 ZIP 需等发版工作流通过后才会出现；独立的 [模型资产 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已提供模型，但不是 CLI 安装包。系统运行库要求见 [CLI 文档](crates/anr-cli/README.md)。
+Windows 将 `./anr` 换成 `.\anr.exe`；CLI 自动查找可执行文件旁的模型，`--model PATH` 可覆盖默认选择。应用 ZIP 需等发版工作流通过后才会出现；独立的 [模型资产 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已提供模型，但不是 CLI 安装包。系统运行库要求见 [CLI 文档](crates/anr-cli/README.md)。
 
 在源码工作区根目录安装 CLI，二进制名为 `anr`。默认构建方式使用 ORT 提供的预编译库；Intel macOS 请按 [CLI 文档](crates/anr-cli/README.md) 配置自备运行库。
 
 ```text
 cargo install --path crates/anr-cli --locked
-anr denoise voice.wav --output clean.wav --model /path/to/dfn3.onnx
-anr denoise a.flac b.mp3 --output-dir cleaned --model /path/to/dfn3.onnx
+anr denoise voice.wav --output clean.wav
+anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav --json
 anr backends --json
 ```
 
-把模型路径换成自己的实际路径。安装后不必从源码目录运行。CLI 默认使用 CPU ORT，默认保留输入采样率、声道数和帧数，输出 WAV 或 raw f32le。
+默认构建不需要手动下载模型或填写 `--model`；显式传入 `--model PATH` 仍可选择自己的文件。安装后不必从源码目录运行。CLI 默认使用 CPU ORT，默认保留输入采样率、声道数和帧数，输出 WAV 或 raw f32le。
 
 raw stdin/stdout 的格式、输出文件的保存方式、执行 provider、模型延迟及不会损坏二进制音频的 shell 调用示例，见 [CLI 使用文档](crates/anr-cli/README.md)。
 
-默认构建可能下载 ONNX Runtime，需要网络和目标平台工具链。当前 ORT 默认预编译分发不包含 Intel macOS。CI 配置为使用 Rust stable 检查原生 Windows x64、Linux x64、macOS arm64/x64，但配置文件不代表这些任务已经通过；已有本地结果和未实测平台见 CLI 文档。
+默认构建会下载模型，并可能下载 ONNX Runtime，首次构建需要网络和目标平台工具链。当前 ORT 默认预编译分发不包含 Intel macOS。CI 配置为使用 Rust stable 检查原生 Windows x64、Linux x64、macOS arm64/x64，但配置文件不代表这些任务已经通过；已有本地结果和未实测平台见 CLI 文档。
 
 若要从源码运行不依赖 ONNX Runtime 的 GLES 版本，在工作区根目录执行：
 
@@ -353,7 +357,7 @@ use anr::{DFN3, NoiseReduction, Result};
 fn main() -> Result<()> {
     anr::ort::initialize_runtime()?;
     let environment = anr::ort::init().build().map_err(anr::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    let mut denoiser = DFN3::from_file(&environment, anr::default_model_path()?)?;
     denoiser.set_factor(80.0);
 
     // 用实际的 48 kHz 单声道采样替换这段静音。
@@ -396,10 +400,10 @@ fn main() -> Result<()> {
 以下示例使用 ORT，需在工作区根目录运行。Compute 后端和带头音频文件应使用 CLI，并明确指定 `--backend`。
 
 ```text
-cargo run -p anr --features ort --example denoise -- <model.onnx> <input.f32le> <output.f32le>
+cargo run -p anr --features ort --example denoise -- <input.f32le> <output.f32le>
 ```
 
-输入文件是 **48 kHz、单声道的原始采样，不是 WAV**：每个采样占 4 字节，以小端序保存为 IEEE 754 `f32`。输出格式相同。在本项目中，`<model.onnx>` 可以写成 `models/dfn3.onnx`；这个模型文件不随 Rust 包提供。使用前请确认模型符合下面的要求，并且你有权使用它。
+输入文件是 **48 kHz、单声道的原始采样，不是 WAV**：每个采样占 4 字节，以小端序保存为 IEEE 754 `f32`。输出格式相同。默认自动查找模型；需要其他模型时，在输入、输出参数前加上 `<model.onnx>`。替换前请确认模型符合下面的要求，并且你有权使用它。
 
 ### ORT 模型输入和输出
 
@@ -431,9 +435,13 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 | `wgpu` | 提供 `anr::wgpu::DFN3`，使用 wgpu 的硬件 adapter，不依赖 ORT。 |
 | `dx` | 提供 `anr::dx::DFN3`，使用原生 Windows Direct3D 12 Compute，不是 DirectML 或 wgpu。 |
 | `ort-download-binaries` | 默认下载选项，只在启用 `ort` 后生效，本身不会启用后端。 |
+| `download-models` | 默认启用，将固定 DFN3 模型下载并校验到持久 Cargo 缓存；构建时可用 `ANR_MODEL_PATH` 指定本地文件。 |
+| `copy-models` | 默认启用，将选中的模型复制到 Cargo 程序、示例和测试旁的 `models/dfn3.onnx`，不会自动启用下载。 |
 | `ort-load-dynamic` | 加载自备运行库；配合 `default-features = false` 可去掉下载器和 TLS 构建依赖，通过 `ORT_DYLIB_PATH` 指向共享库文件。 |
 | `ort-cuda` / `ort-tensorrt` | 编入 CUDA / TensorRT 支持。 |
 | `ort-directml` / `ort-coreml` / `ort-xnnpack` | 编入 DirectML / CoreML / XNNPACK 支持。 |
+
+`anr::default_model_path()` 先查找可执行文件旁的模型，再使用构建时记录的绝对路径，运行时不下载。关闭 defaults 可去掉模型下载，也可仅启用 `copy-models` 并将 `ANR_MODEL_PATH` 设为本地文件的绝对路径。缓存位置、离线构建和分发要求见 [模型准备说明](crates/anr/README.md#模型下载与复制)。
 
 当前固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也可使用兼容 API 27 的自备运行库，包括 1.28.0。动态构建需在初始化前设置 `ORT_DYLIB_PATH`，指向库文件而不是目录。
 
@@ -526,7 +534,7 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 
 `anr-dfn3` 和五个 Compute crate 在源码包中复用本根 README；`anr-core`、`anr-ort`、facade 和 CLI 各有独立 README。Compute 构造器只传模型路径，不接收 ORT 的环境或 `Session`。
 
-`NoiseReduction` 支持 `Box<dyn NoiseReduction>`，降噪器也可以移交给另一个线程（`Send`）。库包不负责音频设备管理、WAV 解码、采样率转换或多声道拆分；CLI 在库外处理文件解码、重采样和多声道。所有包都不自动下载模型。
+`NoiseReduction` 支持 `Box<dyn NoiseReduction>`，降噪器也可以移交给另一个线程（`Send`）。库包不负责音频设备管理、WAV 解码、采样率转换或多声道拆分；CLI 在库外处理文件解码、重采样和多声道。自动模型准备由 `anr` 入口 crate 提供，不放进各个后端 crate。
 
 ### 自动发布到 GitHub
 
