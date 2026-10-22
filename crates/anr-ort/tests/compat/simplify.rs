@@ -369,15 +369,16 @@ fn constant_selection_does_not_hide_an_unknown_operator_or_its_dependency() {
         ..Default::default()
     });
     let bytes = parsed.write_to_bytes().unwrap();
-    let reference_error = ort::session::Session::builder(&ENVIRONMENT)
+    let Err(reference_error) = ort::session::Session::builder(&ENVIRONMENT)
         .unwrap()
         .with_no_environment_execution_providers()
         .unwrap()
         .with_intra_threads(1)
         .unwrap()
         .commit_from_memory(&bytes)
-        .err()
-        .expect("the original opaque operator is unsupported");
+    else {
+        panic!("the original opaque operator is unsupported");
+    };
     for target in gpu_targets() {
         let prepared = prepare_model(&bytes, target).unwrap();
         let result = ort::session::Session::builder(&ENVIRONMENT)
@@ -387,9 +388,9 @@ fn constant_selection_does_not_hide_an_unknown_operator_or_its_dependency() {
             .with_intra_threads(1)
             .unwrap()
             .commit_from_memory(&prepared);
-        let error = result
-            .err()
-            .expect("preparation must not hide an unsupported operator");
+        let Err(error) = result else {
+            panic!("preparation must not hide an unsupported operator");
+        };
         assert_eq!(error.code(), reference_error.code());
         let graph = ModelProto::parse_from_bytes(&prepared)
             .unwrap()

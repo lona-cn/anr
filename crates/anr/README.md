@@ -37,9 +37,11 @@ Cargo unifies features across dependencies. `default-features = false` applies t
 
 ### ORT quickstart
 
+For an external application, after `0.2.0` is published to crates.io:
+
 ```toml
 [dependencies]
-anr = { version = "0.1.1", features = ["ort"] }
+anr = { version = "0.2.0", features = ["ort"] }
 ```
 
 ```rust,no_run
@@ -64,12 +66,12 @@ This processes a silent frame. Import `NoiseReduction` for its methods. `DFN3::f
 For a supplied runtime instead of build-time runtime downloads:
 
 ```toml
-anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynamic"] }
+anr = { version = "0.2.0", default-features = false, features = ["ort-load-dynamic"] }
 ```
 
 Set `ORT_DYLIB_PATH` to a compatible shared-library file before `initialize_runtime()`. This configuration also disables automatic model preparation; pass a model path or bundle the model beside the executable. Cargo.lock pins `ort`/`ort-sys` `2.0.0-rc.15`, API 27, without `ndarray`. Its downloader uses ONNX Runtime 1.31.0; the repository's application release configuration separately pins 1.28.0 in `.github/onnxruntime.json`.
 
-See the [ORT reference](../anr-ort/README.md) for the complete port schema, runtime setup, provider examples, and `prepare_model` / `ModelTarget` byte-buffer API. `session_from_file` prepares CUDA/TensorRT/DirectML graphs in memory once per session without rewriting source files. Direct upstream session loading bypasses preparation. GPU sessions may still place individual operators on CPU; provider registration failures remain errors.
+See the [ORT reference](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md) for the complete port schema, runtime setup, provider examples, and `prepare_model` / `ModelTarget` byte-buffer API. `session_from_file` prepares CUDA/TensorRT/DirectML graphs in memory once per session without rewriting source files. Direct upstream session loading bypasses preparation. GPU sessions may still place individual operators on CPU; provider registration failures remain errors.
 
 From a source checkout, the minimal raw-audio example accepts 48 kHz mono little-endian IEEE 754 `f32` samples, not WAV:
 
@@ -100,7 +102,7 @@ At runtime, `default_model_path()` checks:
 
 It does not search the current directory, read a runtime `ANR_MODEL_PATH`, or download anything. The executable-relative model works even with all defaults disabled. Ship that model and its required notices with an application; build/cache paths are not portable. A persistent cache can outlive `cargo install`'s temporary build directory.
 
-A cold cache with `CARGO_NET_OFFLINE=true`, download failure, or checksum mismatch fails the build. Supply a local model for offline preparation. Model downloads use native TLS; docs.rs builds skip preparation. See [model provenance and notices](https://github.com/lona-cn/anr/blob/master/.github/models/NOTICE.md) before redistribution.
+A cold cache with `CARGO_NET_OFFLINE=true`, download failure, or checksum mismatch fails the build. Supply a local model for offline preparation. Model downloads use native TLS; docs.rs builds skip preparation. See [model provenance and notices](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md) before redistribution.
 
 ### Native streaming contract
 
@@ -112,7 +114,7 @@ All native DFN3 types implement `NoiseReduction: Send`; the trait supports `Box<
 - `reset()` clears audio/feature/network state and preserves strength. Native compute defers the reset until the next frame.
 - No backend adds model-latency compensation or an end-of-stream flush.
 
-An in-flight execution failure may follow successful frames and leave output/state partly advanced; there is no rollback. ORT callers should reset before reuse and recreate an unusable session. Native workers mark a reset pending after frame failure, but a failed runtime/device may require recreation. CUDA/OpenCL reject execution after a GPU error; Vulkan submission/fence/wait failures also invalidate the executor. Reset does not repair device loss. Shared error variants are documented in [`anr-core`](../anr-core/README.md).
+An in-flight execution failure may follow successful frames and leave output/state partly advanced; there is no rollback. ORT callers should reset before reuse and recreate an unusable session. Native workers mark a reset pending after frame failure, but a failed runtime/device may require recreation. CUDA/OpenCL reject execution after a GPU error; Vulkan submission/fence/wait failures also invalidate the executor. Reset does not repair device loss. Shared error variants are documented in [`anr-core`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-core/README.md).
 
 Initial attenuation is **3 dB** (`factor() == 5`). `set_factor` clamps to `0..=100` and sets `round(factor / 100 * 60)` dB. `factor()` converts the actual setting back and rounds, so it may differ from the supplied value. NaN is ignored; positive/negative infinity saturates at the upper/lower bound. Only ORT additionally exposes fractional-dB `set_atten_lim_db` / `get_atten_lim_db` (`0..=60` dB).
 
@@ -123,7 +125,7 @@ Strength is an attenuation limit, not a dry/wet mix. Zero still executes the mod
 For any native non-ORT backend, disable defaults if model preparation is not wanted and enable its feature:
 
 ```toml
-anr = { version = "0.1.1", default-features = false, features = ["gles"] }
+anr = { version = "0.2.0", default-features = false, features = ["gles"] }
 ```
 
 ```rust,no_run
@@ -167,7 +169,7 @@ fn main() -> Result<()> {
 - `ANR_OPENVINO_RUNTIME`: explicit OpenVINO shared-library file.
 - Platform loader paths must resolve transitive vendor dependencies, including Linux `LD_LIBRARY_PATH` where needed.
 
-The CLI's `--provider` selects an ORT provider only; native selection uses `--backend`, with OpenVINO's `--openvino-device` separate. The CLI defaults to ORT even when another backend is compiled. File/pipe commands are in the [CLI reference](../anr-cli/README.md); historical timings, measured hardware, and reproduction rules are in [benchmark.md](https://github.com/lona-cn/anr/blob/master/benchmark.md).
+The CLI's `--provider` selects an ORT provider only; native selection uses `--backend`, with OpenVINO's `--openvino-device` separate. The CLI defaults to ORT even when another backend is compiled. File/pipe commands are in the [CLI reference](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md); historical timings, measured hardware, and reproduction rules are in [benchmark.md](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md).
 
 ### Browser WebGPU
 
@@ -215,7 +217,7 @@ try {
 
 `run` returns `Promise<Float32Array>`. Overlapping runs are rejected; `factor`, `setFactor`, and `reset` also reject while a run is in flight. Await completion before calling them. Freeing the JS wrapper does not cancel an already-owned run.
 
-The [module Worker example](https://github.com/lona-cn/anr/blob/master/crates/anr-wgpu/examples/web/worker.js) serializes requests with an `id` and `type`: `init` takes a model `ArrayBuffer`; `run` takes `sampleRate` and a `Float32Array`/`ArrayBuffer`; `setFactor` takes `factor`; `reset` and `dispose` take no payload. Replies contain `id`, `ok`, and `factor`, `output`, or `error` as applicable. Successful audio replies transfer `output.buffer`. Create it with `new Worker('/target/anr-wgpu-web/worker.js', { type: 'module' })`.
+The [module Worker example](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/examples/web/worker.js) serializes requests with an `id` and `type`: `init` takes a model `ArrayBuffer`; `run` takes `sampleRate` and a `Float32Array`/`ArrayBuffer`; `setFactor` takes `factor`; `reset` and `dispose` take no payload. Replies contain `id`, `ok`, and `factor`, `output`, or `error` as applicable. Successful audio replies transfer `output.buffer`. Create it with `new Worker('/target/anr-wgpu-web/worker.js', { type: 'module' })`.
 
 Microphone capture, resampling, AudioWorklet buffering, channel routing, and delay compensation belong to the host application. Default facade model-copy/download features do not supply browser assets.
 
@@ -237,7 +239,7 @@ python -m pip install onnx==1.19.1 numpy==2.2.6
 python tools/generate_gl_reference.py
 ```
 
-The [generator](https://github.com/lona-cn/anr/blob/master/tools/generate_gl_reference.py) checks the model SHA before evaluation and **overwrites both fixture files for all nine native backends**: GL, GLES, Vulkan, wgpu, D3D12, CUDA, TensorRT, OpenVINO, and OpenCL. Its deterministic stream includes silence, attenuation changes, and a 13-sample final frame. These Python packages are fixture-generation dependencies, not product runtime dependencies; normal regression runs use the existing fixtures.
+The [generator](https://github.com/lona-cn/anr/blob/v0.2.0/tools/generate_gl_reference.py) checks the model SHA before evaluation and **overwrites both fixture files for all nine native backends**: GL, GLES, Vulkan, wgpu, D3D12, CUDA, TensorRT, OpenVINO, and OpenCL. Its deterministic stream includes silence, attenuation changes, and a 13-sample final frame. These Python packages are fixture-generation dependencies, not product runtime dependencies; normal regression runs use the existing fixtures.
 
 For browser checks, build and serve the package as above, make `/models/dfn3.onnx` available, and run this in the browser console on that local server:
 
@@ -250,7 +252,7 @@ await runReference(
 );
 ```
 
-The [browser reference harness](https://github.com/lona-cn/anr/blob/master/crates/anr-wgpu/tests/web/reference.js) checks direct bindings and the module Worker against the same fixtures, including state/reset, partial-frame padding, rejected calls/concurrency, and stream lifecycle. It requires working hardware WebGPU; these numerical/API regressions are separate from performance benchmarks.
+The [browser reference harness](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/tests/web/reference.js) checks direct bindings and the module Worker against the same fixtures, including state/reset, partial-frame padding, rejected calls/concurrency, and stream lifecycle. It requires working hardware WebGPU; these numerical/API regressions are separate from performance benchmarks.
 
 ### License
 
@@ -291,9 +293,11 @@ Cargo 对依赖图中的 features 取并集；一处 `default-features = false` 
 
 ### ORT 入门
 
+在工作区外的应用中，待 `0.2.0` 发布到 crates.io 后使用：
+
 ```toml
 [dependencies]
-anr = { version = "0.1.1", features = ["ort"] }
+anr = { version = "0.2.0", features = ["ort"] }
 ```
 
 ```rust,no_run
@@ -317,12 +321,12 @@ fn main() -> Result<()> {
 自备运行库、不在构建时下载：
 
 ```toml
-anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynamic"] }
+anr = { version = "0.2.0", default-features = false, features = ["ort-load-dynamic"] }
 ```
 
 调用 `initialize_runtime()` 前将 `ORT_DYLIB_PATH` 设为兼容的共享库文件。此配置也关闭自动模型准备，须显式指定路径或将模型放在程序旁。Cargo.lock 固定 `ort`/`ort-sys` `2.0.0-rc.15`、API 27，不启用 `ndarray`；下载器使用 ONNX Runtime 1.31.0，而应用发布配置 `.github/onnxruntime.json` 单独固定 1.28.0。
 
-完整端口、运行库设置、provider 示例及 `prepare_model` / `ModelTarget` 字节 API 见 [ORT 参考](../anr-ort/README.md)。共用加载器对 CUDA/TensorRT/DirectML 在内存中准备图，每 Session 一次，不改写源文件；直接用上游加载会绕过准备。GPU Session 可以按算子使用 CPU，但 provider 注册失败仍报错。
+完整端口、运行库设置、provider 示例及 `prepare_model` / `ModelTarget` 字节 API 见 [ORT 参考](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md)。共用加载器对 CUDA/TensorRT/DirectML 在内存中准备图，每 Session 一次，不改写源文件；直接用上游加载会绕过准备。GPU Session 可以按算子使用 CPU，但 provider 注册失败仍报错。
 
 源码工作区提供最小 raw 示例，输入为 48 kHz 单声道、小端 IEEE 754 `f32`，不是 WAV：
 
@@ -348,7 +352,7 @@ ORT 不固定摘要，但模型必须满足端口和语义契约。
 
 运行时 `default_model_path()` 先查找可执行文件旁的 `models/dfn3.onnx`，再查找构建时记录且仍存在的绝对路径。它不搜索工作目录，不读取运行时 `ANR_MODEL_PATH`，也不联网；关闭全部 defaults 后仍可使用程序旁的模型。分发时须附模型及必要通知，不能依赖构建缓存路径。持久缓存可在 `cargo install` 临时目录删除后继续使用。
 
-冷缓存且 `CARGO_NET_OFFLINE=true`、下载失败或摘要不符均会导致构建失败；离线准备请指定本地模型。下载使用 native TLS，docs.rs 跳过准备。分发前阅读[模型来源与通知](https://github.com/lona-cn/anr/blob/master/.github/models/NOTICE.md)。
+冷缓存且 `CARGO_NET_OFFLINE=true`、下载失败或摘要不符均会导致构建失败；离线准备请指定本地模型。下载使用 native TLS，docs.rs 跳过准备。分发前阅读[模型来源与通知](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md)。
 
 ### 原生流处理契约
 
@@ -360,7 +364,7 @@ ORT 不固定摘要，但模型必须满足端口和语义契约。
 - `reset()` 清除音频/特征/网络状态，保留强度；原生 Compute 在下一帧执行前落实 reset。
 - 不补偿模型延迟，不提供流结束 flush。
 
-执行错误可能发生在前几帧已写入输出、状态推进之后，不回滚。ORT 再次使用前应 reset，Session 不可用时重建。原生 worker 在帧失败后标记下次 reset，但运行库/设备故障仍可能需要重建。CUDA/OpenCL 在 GPU 错误后拒绝继续执行；Vulkan 提交/fence/等待失败也会使执行器失效。reset 不能修复设备丢失。公共错误类型见 [`anr-core`](../anr-core/README.md)。
+执行错误可能发生在前几帧已写入输出、状态推进之后，不回滚。ORT 再次使用前 reset，Session 不可用时重建。原生 worker 在帧失败后标记下次 reset，但运行库/设备故障仍可能需要重建。CUDA/OpenCL 在 GPU 错误后拒绝继续执行；Vulkan 提交/fence/等待失败也会使执行器失效。reset 不能修复设备丢失。公共错误类型见 [`anr-core`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-core/README.md)。
 
 初始衰减为 **3 dB**（`factor() == 5`）。`set_factor` 将值限制到 `0..=100`，按 `round(factor / 100 * 60)` 设置整分贝；`factor()` 根据实际分贝反算并取整，可能与输入不同。NaN 不改设置，正负无穷分别饱和到上限和下限。仅 ORT 另提供保留小数的 `set_atten_lim_db` / `get_atten_lim_db`，范围 `0..=60` dB。
 
@@ -371,7 +375,7 @@ ORT 不固定摘要，但模型必须满足端口和语义契约。
 不需要自动模型准备时关闭 defaults，启用所需 feature，例如：
 
 ```toml
-anr = { version = "0.1.1", default-features = false, features = ["gles"] }
+anr = { version = "0.2.0", default-features = false, features = ["gles"] }
 ```
 
 ```rust,no_run
@@ -415,7 +419,7 @@ fn main() -> Result<()> {
 - `ANR_OPENVINO_RUNTIME` 指定 OpenVINO 共享库文件。
 - 平台加载路径须能解析传递依赖，Linux 按需配置 `LD_LIBRARY_PATH`。
 
-CLI `--provider` 仅选择 ORT provider；原生后端使用 `--backend`，OpenVINO 另用 `--openvino-device`。编入其他后端不改变 CLI 的 ORT 默认选择。文件/管道命令见 [CLI 参考](../anr-cli/README.md)，历史性能、实测硬件与复现规则见 [benchmark.md](https://github.com/lona-cn/anr/blob/master/benchmark.md)。
+CLI `--provider` 仅选择 ORT provider；原生后端使用 `--backend`，OpenVINO 另用 `--openvino-device`。编入其他后端不改变 CLI 的 ORT 默认选择。文件/管道命令见 [CLI 参考](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md)，历史性能、实测硬件与复现规则见 [benchmark.md](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md)。
 
 ### 浏览器 WebGPU
 
@@ -446,7 +450,7 @@ python -m http.server 8000 --bind 127.0.0.1
 
 JS 提供 `DFN3.fromBytes`、`run`、`factor`、`setFactor`、`reset`、`free`。`run` 返回 `Promise<Float32Array>`，拒绝重叠运行；执行中 `factor`、`setFactor`、`reset` 也会报错，须先 await。释放 JS wrapper 不会取消已持有实例的 run。
 
-[module Worker 示例](https://github.com/lona-cn/anr/blob/master/crates/anr-wgpu/examples/web/worker.js) 串行处理带 `id`、`type` 的消息：`init` 传模型 `ArrayBuffer`；`run` 传 `sampleRate` 和 `Float32Array`/`ArrayBuffer`；`setFactor` 传 `factor`；`reset`、`dispose` 无额外负载。回复含 `id`、`ok`，按操作附 `factor`、`output` 或 `error`；成功音频回复转移 `output.buffer`。用 `new Worker('/target/anr-wgpu-web/worker.js', { type: 'module' })` 创建。
+[module Worker 示例](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/examples/web/worker.js) 串行处理带 `id`、`type` 的消息：`init` 传模型 `ArrayBuffer`；`run` 传 `sampleRate` 和 `Float32Array`/`ArrayBuffer`；`setFactor` 传 `factor`；`reset`、`dispose` 无额外负载。回复含 `id`、`ok`，按操作附 `factor`、`output` 或 `error`；成功音频回复转移 `output.buffer`。用 `new Worker('/target/anr-wgpu-web/worker.js', { type: 'module' })` 创建。
 
 麦克风采集、重采样、AudioWorklet 缓冲、声道路由和延迟补偿由应用负责；facade 默认下载/复制功能不会提供浏览器模型资源。
 
@@ -468,7 +472,7 @@ python -m pip install onnx==1.19.1 numpy==2.2.6
 python tools/generate_gl_reference.py
 ```
 
-[生成器](https://github.com/lona-cn/anr/blob/master/tools/generate_gl_reference.py)先校验模型 SHA，再计算参考结果，**覆盖 GL、GLES、Vulkan、wgpu、D3D12、CUDA、TensorRT、OpenVINO、OpenCL 九个原生后端的两份 fixture 文件**。确定性输入覆盖静音、衰减切换及末尾 13 采样短帧。这些 Python 包仅用于生成开发数据，不是产品运行依赖；常规回归使用现有 fixture。
+[生成器](https://github.com/lona-cn/anr/blob/v0.2.0/tools/generate_gl_reference.py)先校验模型 SHA，再计算参考结果，**覆盖 GL、GLES、Vulkan、wgpu、D3D12、CUDA、TensorRT、OpenVINO、OpenCL 九个原生后端的两份 fixture 文件**。确定性输入覆盖静音、衰减切换及末尾 13 采样短帧。这些 Python 包仅用于生成开发数据，不是产品运行依赖；常规回归使用现有 fixture。
 
 浏览器检查先按上文构建并启动本地服务器，提供 `/models/dfn3.onnx`，再在该站点的浏览器控制台执行：
 
@@ -481,7 +485,7 @@ await runReference(
 );
 ```
 
-[浏览器参考测试](https://github.com/lona-cn/anr/blob/master/crates/anr-wgpu/tests/web/reference.js)用相同 fixture 检查直接绑定和 module Worker，覆盖状态/reset、尾帧补零、无效调用/并发拒绝及实例生命周期。需要可用的硬件 WebGPU；数值/API 回归与性能 benchmark 分开进行。
+[浏览器参考测试](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/tests/web/reference.js)用相同 fixture 检查直接绑定和 module Worker，覆盖状态/reset、尾帧补零、无效调用/并发拒绝及实例生命周期。需要可用的硬件 WebGPU；数值/API 回归与性能 benchmark 分开进行。
 
 ### 许可
 

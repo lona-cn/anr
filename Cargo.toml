@@ -4,22 +4,22 @@ members = ["crates/anr-core", "crates/anr-ort", "crates/anr-dfn3", "crates/anr-g
 exclude = ["vox-noise-reduction"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-anr-core = { version = "0.1.1", path = "crates/anr-core" }
-anr-ort = { version = "0.1.1", path = "crates/anr-ort", default-features = false }
-anr-dfn3 = { version = "0.1.1", path = "crates/anr-dfn3" }
-anr-gl = { version = "0.1.1", path = "crates/anr-gl" }
-anr-gles = { version = "0.1.1", path = "crates/anr-gles" }
-anr-vk = { version = "0.1.1", path = "crates/anr-vk" }
-anr-wgpu = { version = "0.1.1", path = "crates/anr-wgpu" }
-anr-dx = { version = "0.1.1", path = "crates/anr-dx" }
-anr-cuda = { version = "0.1.1", path = "crates/anr-cuda" }
-anr-tensorrt = { version = "0.1.1", path = "crates/anr-tensorrt" }
-anr-openvino = { version = "0.1.1", path = "crates/anr-openvino" }
-anr-opencl = { version = "0.1.1", path = "crates/anr-opencl" }
-anr = { version = "0.1.1", path = "crates/anr", default-features = false }
+anr-core = { version = "0.2.0", path = "crates/anr-core" }
+anr-ort = { version = "0.2.0", path = "crates/anr-ort", default-features = false }
+anr-dfn3 = { version = "0.2.0", path = "crates/anr-dfn3" }
+anr-gl = { version = "0.2.0", path = "crates/anr-gl" }
+anr-gles = { version = "0.2.0", path = "crates/anr-gles" }
+anr-vk = { version = "0.2.0", path = "crates/anr-vk" }
+anr-wgpu = { version = "0.2.0", path = "crates/anr-wgpu" }
+anr-dx = { version = "0.2.0", path = "crates/anr-dx" }
+anr-cuda = { version = "0.2.0", path = "crates/anr-cuda" }
+anr-tensorrt = { version = "0.2.0", path = "crates/anr-tensorrt" }
+anr-openvino = { version = "0.2.0", path = "crates/anr-openvino" }
+anr-opencl = { version = "0.2.0", path = "crates/anr-opencl" }
+anr = { version = "0.2.0", path = "crates/anr", default-features = false }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "api-27"] }

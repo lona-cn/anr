@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "anr"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-cuda",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "anr-bench"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-cuda",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "anr-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr",
  "anyhow",
@@ -181,11 +181,11 @@ dependencies = [
 
 [[package]]
 name = "anr-core"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "anr-cuda"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "anr-dfn3"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "bytemuck",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "anr-dx"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "anr-gl"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "anr-gles"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-gl",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "anr-lite"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "burn",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "anr-opencl"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "anr-openvino"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "anr-ort"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "onnx-protobuf",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "anr-tensorrt"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "anr-vk"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "anr-wgpu"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anr-core",
  "anr-dfn3",
