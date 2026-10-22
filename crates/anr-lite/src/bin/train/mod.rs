@@ -144,19 +144,40 @@ fn evaluate(
     ensure!(count > 0, "评估数据不能为空");
     let mut weighted_loss = 0.0;
     let mut total_samples = 0usize;
-    for pair in &pairs[..count] {
-        let mut noisy = vec![0.0; pair.samples];
-        let mut clean = vec![0.0; pair.samples];
-        let valid = read_segment(pair, 0, &mut noisy, &mut clean)?;
-        let noisy = Tensor::<2>::from_data(TensorData::new(noisy, [1, valid]), device);
-        let clean = Tensor::<2>::from_data(TensorData::new(clean, [1, valid]), device);
+    // Batch only the valid-mode waveform renderer. Keep the original
+    // per-utterance loss boundaries and sample-weighted corpus reduction.
+    for batch in pairs[..count].chunks(8) {
+        let samples = batch.iter().map(|pair| pair.samples).max().unwrap();
+        let elements = samples
+            .checked_mul(batch.len())
+            .context("评估 batch 大小溢出")?;
+        let mut noisy = vec![0.0; elements];
+        let mut clean = vec![0.0; elements];
+        let mut lengths = Vec::with_capacity(batch.len());
+        for (index, pair) in batch.iter().enumerate() {
+            let range = index * samples..(index + 1) * samples;
+            lengths.push(read_segment(
+                pair,
+                0,
+                &mut noisy[range.clone()],
+                &mut clean[range],
+            )?);
+        }
+        let noisy = Tensor::<2>::from_data(TensorData::new(noisy, [batch.len(), samples]), device);
+        let clean = Tensor::<2>::from_data(TensorData::new(clean, [batch.len(), samples]), device);
         let prediction = processor.forward(model, noisy);
-        let value = loss
-            .forward(prediction, clean, &[valid])
-            .try_into_scalar::<f32>()?;
-        ensure!(value.is_finite(), "评估损失不是有限数，文件 {}", pair.id);
-        weighted_loss += f64::from(value) * valid as f64;
-        total_samples += valid;
+        for (index, (pair, &valid)) in batch.iter().zip(&lengths).enumerate() {
+            let value = loss
+                .forward(
+                    prediction.clone().slice([index..index + 1, 0..valid]),
+                    clean.clone().slice([index..index + 1, 0..valid]),
+                    &[valid],
+                )
+                .try_into_scalar::<f32>()?;
+            ensure!(value.is_finite(), "评估损失不是有限数，文件 {}", pair.id);
+            weighted_loss += f64::from(value) * valid as f64;
+            total_samples += valid;
+        }
     }
     Ok(Evaluation {
         loss: weighted_loss / total_samples as f64,
@@ -422,4 +443,107 @@ pub(super) fn run(args: Args, segment_samples: usize) -> Result<()> {
     );
     println!("checkpoint 仅保存模型与归一化状态，不包含优化器或随机数状态，不能用于精确续训。");
     Ok(())
+}
+
+#[cfg(all(test, feature = "flex"))]
+mod tests {
+    use super::*;
+    use anr_lite::burn::module::{ModuleMapper, Param};
+    use hound::{SampleFormat, WavSpec, WavWriter};
+
+    struct ZeroParameters;
+
+    impl ModuleMapper for ZeroParameters {
+        fn map_float<const D: usize>(&mut self, parameter: Param<Tensor<D>>) -> Param<Tensor<D>> {
+            parameter.map(|tensor| Tensor::zeros(tensor.dims(), &tensor.device()))
+        }
+    }
+
+    fn write_wave(path: &Path, samples: &[i16]) {
+        let mut writer = WavWriter::create(
+            path,
+            WavSpec {
+                channels: 1,
+                sample_rate: SAMPLE_RATE,
+                bits_per_sample: 16,
+                sample_format: SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for &sample in samples {
+            writer.write_sample(sample).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn full_validation_preserves_unequal_length_weighting_and_unpadded_losses() {
+        let temporary = tempfile::tempdir().unwrap();
+        let device = Device::flex();
+        let model = AnrLite48::new(&device).map(&mut ZeroParameters).valid();
+        let processor = AudioProcessor::new(&device);
+        let loss = EnhancementLoss::new(&device);
+        let mut pairs = Vec::new();
+        let mut expected_weighted = 0.0;
+        let mut expected_samples = 0;
+        let mut individual_losses = Vec::new();
+        for (index, samples) in [517, 1073].into_iter().enumerate() {
+            let noisy: Vec<i16> = (0..samples)
+                .map(|sample| ((sample * 197 % 28001) as i32 - 14000) as i16)
+                .collect();
+            let clean: Vec<i16> = noisy
+                .iter()
+                .map(|&sample| if index == 0 { sample / 3 } else { -sample / 2 })
+                .collect();
+            let noisy_path = temporary.path().join(format!("noisy-{index}.wav"));
+            let clean_path = temporary.path().join(format!("clean-{index}.wav"));
+            write_wave(&noisy_path, &noisy);
+            write_wave(&clean_path, &clean);
+            // Every zero-logit ERB gain is 0.5 and every complex DF residual
+            // is zero. The expected waveform does not use the audio processor.
+            let prediction = Tensor::from_data(
+                TensorData::new(
+                    noisy
+                        .iter()
+                        .map(|&sample| f32::from(sample) / 65536.0)
+                        .collect::<Vec<_>>(),
+                    [1, samples],
+                ),
+                &device,
+            );
+            let target = Tensor::from_data(
+                TensorData::new(
+                    clean
+                        .iter()
+                        .map(|&sample| f32::from(sample) / 32768.0)
+                        .collect::<Vec<_>>(),
+                    [1, samples],
+                ),
+                &device,
+            );
+            let expected = f64::from(
+                loss.forward(prediction, target, &[samples])
+                    .try_into_scalar::<f32>()
+                    .unwrap(),
+            );
+            individual_losses.push(expected);
+            expected_weighted += expected * samples as f64;
+            expected_samples += samples;
+            pairs.push(Pair {
+                id: format!("p226_{index}"),
+                speaker: "p226".into(),
+                noisy: noisy_path,
+                clean: clean_path,
+                samples,
+            });
+        }
+        let full = evaluate(&model, &pairs, None, &processor, &loss, &device).unwrap();
+        assert_eq!(full.items, pairs.len());
+        assert_eq!(full.samples, expected_samples);
+        assert!((full.loss - expected_weighted / expected_samples as f64).abs() < 1e-6);
+        let limited = evaluate(&model, &pairs, Some(1), &processor, &loss, &device).unwrap();
+        assert_eq!(limited.items, 1);
+        assert_eq!(limited.samples, pairs[0].samples);
+        assert!((limited.loss - individual_losses[0]).abs() < 1e-6);
+    }
 }

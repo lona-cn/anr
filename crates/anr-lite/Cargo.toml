@@ -31,6 +31,12 @@ path = "src/bin/anr-lite-train.rs"
 required-features = ["train"]
 doc = false
 
+[[bin]]
+name = "anr-lite-evaluate"
+path = "src/bin/anr-lite-evaluate.rs"
+required-features = ["train"]
+doc = false
+
 [[example]]
 name = "smoke"
 required-features = ["flex"]
