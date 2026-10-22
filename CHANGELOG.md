@@ -17,8 +17,6 @@
 - 新增 ORT 加载前的运行时内存改图：CUDA 展开不支持的 `FusedConv(Sigmoid)`；TensorRT 另将静态状态序列访问转换为 `Split`，将可以证明安全的固定形状张量分支转换为 `Where`。保持权重、状态布局及动态衰减语义，不改写原 ONNX、不生成派生模型或磁盘缓存、不在每帧重复转换。
 - 新增并导出 `session_from_file`、`prepare_model`、`ModelTarget`，CLI 与 benchmark 共用加载入口；保留调用方 builder 配置及显式外部权重目录，注册失败仍报错。CPU、DirectML 和原生 GL/VK/DX 加载不变，不使用 TRT 全局算子黑名单或整 Session CPU 重试。
 - 使用完整 `onnx-protobuf` 消息保留未知字段，补充其 MPL-2.0 源码获取说明。新增数值回归覆盖卷积残差、静态及动态索引、分支局部命名、条件形状和不能提前执行的分支；真实模型 GPU 回归覆盖动态强度、reset 和尾帧。
-
-## 0.1.1
 - 新增不依赖 ORT 的 `anr-cuda`、`anr-tensorrt`、`anr-openvino`、`anr-opencl`，以及对应 facade features/modules 和 CLI `--backend`。原有默认 ORT 构建、默认后端和 CPU Release ZIP 不变，`--provider` 仍只适用于 ORT。
 - CUDA 使用 Driver API/NVRTC、固定显存与双方向 CUDA Graph；OpenCL 使用硬件 GPU、原生 OpenCL C 1.2 kernels 和 in-order queue。两者完整执行固定 DFN3 的 FFT、特征归一化、网络、频谱滤波及音频合成，不回退 CPU。
 - TensorRT 将共享固定调度转换为两个标准层 NN engine，与原生 CUDA DSP/FFT 共同捕获为整帧 Graph；保留 encoder 后的 DF-history 更新，使用 256 字节对齐 scratch 与 GRU 状态绑定，不将完整模型藏在单一 plugin 中。
@@ -26,6 +24,8 @@
 - `anr-bench` 接入四个原生后端，CUDA/OpenCL 随 native 构建编入，TensorRT/OpenVINO 通过独立可选 SDK features 编入；默认测量列表仍为 `gl,vk,dx`。OpenVINO JSON 记录请求设备与实际执行设备；显式 CPU 推理仍标为不允许 fallback。
 - Windows 上四后端均通过固定阈值的独立连续帧数值回归、强度切换、尾帧、无效调用、线程移交和 reset，以及 CLI raw/WAV、独立立体声与批处理测试。CUDA/TensorRT/OpenCL 使用 RTX 2080 Ti，OpenVINO 使用 Ryzen 7 5800X CPU；七后端 benchmark 已实跑。OpenVINO GPU 原图在 NonZero kernel 编译处失败，NPU 与跨平台设备执行未验证，不据此声称全部设备支持或实时保证。
 - TensorRT/OpenVINO 需要显式配置厂商 C++ SDK，并分发私有共享 shim 与适用运行库；按需加载失败作为后端错误返回。无 SDK 的 CI 检查明确排除这两个包，保留其他后端与 ORT provider 检查；有 SDK 的配置单独验收。
+
+## 0.1.1
 
 - 新增 `anr-gles`、`gles` feature 和 `--backend gles`：复用 GL 执行器及统一 WGSL，生成 GLSL ES 310，强制原生 ES 3.1+ context，不退回桌面 GL、ORT 或 CPU。Windows 使用 WGL ES profile，Linux 使用硬件 EGL pbuffer；尚未提供 Android/WebGL/macOS context。
 - GLES 使用 fence 后映射当前输出帧，不调用桌面专用 `glGetBufferSubData`；检查原生 `glUnmapBuffer` 返回值。共享内存要求按 FFT 的实际 15,360 字节检查，不再错误要求 ES 设备提供 32 KiB。

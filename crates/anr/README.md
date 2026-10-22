@@ -278,6 +278,10 @@ Check model weights and ONNX files separately for use and redistribution rights.
 | `vk` | Vulkan | `anr::vk::DFN3` |
 | `wgpu` | 原生 wgpu / 浏览器 WebGPU | 原生 `anr::wgpu::DFN3`；WASM `anr::wgpu::web::DFN3` |
 | `dx` | Direct3D 12 | `anr::dx::DFN3` |
+| `cuda` | 原生 CUDA Driver/NVRTC | `anr::cuda::DFN3` |
+| `tensorrt` | 原生 TensorRT + CUDA DSP/FFT | `anr::tensorrt::DFN3` |
+| `openvino` | 原生 OpenVINO Runtime，明确选择 CPU/GPU/NPU | `anr::openvino::DFN3`、`anr::openvino::Device` |
+| `opencl` | 原生 OpenCL 1.2 GPU | `anr::opencl::DFN3` |
 
 只用 ORT 以外的后端时，在 Cargo 配置中设置 `default-features = false`，并在 `features` 中填写后端名称。例如：
 
@@ -296,10 +300,6 @@ anr = { version = "0.1.1", features = ["ort"] }
 ```
 
 依赖示例使用 `0.1.1`。使用本地源码时，可以把版本依赖改成指向对应 crate 目录的 `path` 依赖。
-| `cuda` | 原生 CUDA Driver/NVRTC | `anr::cuda::DFN3` |
-| `tensorrt` | 原生 TensorRT + CUDA DSP/FFT | `anr::tensorrt::DFN3` |
-| `openvino` | 原生 OpenVINO Runtime，明确选择 CPU/GPU/NPU | `anr::openvino::DFN3`、`anr::openvino::Device` |
-| `opencl` | 原生 OpenCL 1.2 GPU | `anr::opencl::DFN3` |
 
 ```rust,no_run
 use anr::{DFN3, NoiseReduction, Result};

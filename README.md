@@ -308,6 +308,15 @@ cargo run --release -p anr-bench -- --backend vk,dx --json
 
 By default it tests `gl,vk,dx` sequentially, warming up each backend for 100 frames and measuring 1,000 frames at strength 80. Use `--backend gl,vk` on Linux; D3D12 is Windows-only. `--backend` also accepts repeated flags and preserves their order. `--model` defaults to `models/dfn3.onnx`; `--warmup 0` is allowed, `--frames` must be positive, and `--strength` must be finite and within 0–100.
 
+CUDA and OpenCL are compiled into the default native benchmark build, but are not added to the default selection. TensorRT and OpenVINO require opt-in SDK features:
+
+```sh
+cargo run --release -p anr-bench -- --backend cuda,opencl --warmup 100 --frames 1000 --json
+cargo run --release -p anr-bench --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
+```
+
+Supply the SDK/runtime paths described above before the second command. `cuda` / `tensorrt` are independent native backends, not aliases for `ort-cuda` / `ort-tensorrt`.
+
 Optional `ort-cuda`, `ort-tensorrt`, and `ort-directml` features add identically named `--backend` choices. They are not added to the default backend list. DirectML requires Windows. Select a runtime source as well: `ort-download-binaries` uses the pinned prebuilt distribution, while `ort-load-dynamic` loads an API-27-compatible library file through `ORT_DYLIB_PATH`.
 
 ```sh
@@ -381,15 +390,6 @@ Each run creates a new `target/anr-lite-training/<time>-<pid>` directory, or the
 
 ### Which crate should I use?
 
-CUDA and OpenCL are compiled into the default native benchmark build, but are not added to the default selection. TensorRT and OpenVINO require opt-in SDK features:
-
-```sh
-cargo run --release -p anr-bench -- --backend cuda,opencl --warmup 100 --frames 1000 --json
-cargo run --release -p anr-bench --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
-```
-
-Supply the SDK/runtime paths described above before the second command. `cuda` / `tensorrt` are independent native backends, not aliases for `ort-cuda` / `ort-tensorrt`.
-
 Use `anr` in most Rust applications, or install `anr-cli` to work with files. Backend crates separate each implementation from the common interface.
 
 | Crate | When to use it |
@@ -402,6 +402,10 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 | `anr-vk` | Native Vulkan compute DFN3, without ORT or wgpu. |
 | `anr-wgpu` | wgpu compute DFN3, without ORT. |
 | `anr-dx` | Native Windows Direct3D 12 compute DFN3, without ORT, DirectML, or wgpu. |
+| `anr-cuda` | Complete fixed-model FP32 CUDA Driver/NVRTC inference with replay graphs, without ORT. |
+| `anr-tensorrt` | Real native TensorRT neural-network engines plus CUDA DSP/FFT; TensorRT/CUDA SDKs required. |
+| `anr-openvino` | Native OpenVINO ONNX import and stateful inference on explicitly selected CPU/GPU/NPU; C++ SDK required. |
+| `anr-opencl` | Complete fixed-model FP32 OpenCL 1.2 hardware GPU inference without CPU fallback. |
 | `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
 | `anr-lite` | Develop and train ANR-Lite-48 in Burn, with differentiable streaming audio DSP, optional VoiceBank-DEMAND training, CPU and optional wgpu execution. No pretrained weights included. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
@@ -456,10 +460,6 @@ Rust 库支持 `ort`（ONNX Runtime）、`gl`（OpenGL）、`gles`（OpenGL ES�
 anr = { version = "0.1.1", default-features = false, features = ["wgpu"] }
 ```
 
-| `anr-cuda` | Complete fixed-model FP32 CUDA Driver/NVRTC inference with replay graphs, without ORT. |
-| `anr-tensorrt` | Real native TensorRT neural-network engines plus CUDA DSP/FFT; TensorRT/CUDA SDKs required. |
-| `anr-openvino` | Native OpenVINO ONNX import and stateful inference on explicitly selected CPU/GPU/NPU; C++ SDK required. |
-| `anr-opencl` | Complete fixed-model FP32 OpenCL 1.2 hardware GPU inference without CPU fallback. |
 在 `Cargo.toml` 的 `features` 中列出要用的后端；写多个就会一起编入程序，程序运行时不会自动切换。非 ORT 后端只支持本项目指定的 DFN3 模型，不能用来运行任意 ONNX 文件。各后端的硬件和系统要求见 [anr crate 文档](crates/anr/README.md)。
 
 ### 直接处理音频文件
@@ -590,6 +590,10 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 | `vk` | 提供 `anr::vk::DFN3`，使用原生 Vulkan 1.1 Compute，不依赖 ORT 或 wgpu。 |
 | `wgpu` | 原生平台提供 `anr::wgpu::DFN3`；`wasm32-unknown-unknown` 提供异步 `anr::wgpu::web::DFN3`，均不依赖 ORT。 |
 | `dx` | 提供 `anr::dx::DFN3`，使用原生 Windows Direct3D 12 Compute，不是 DirectML 或 wgpu。 |
+| `cuda` | 提供 `anr::cuda::DFN3`，使用 CUDA Driver/NVRTC 与 replay graph 完成全流程 FP32 推理，不依赖 ORT。 |
+| `tensorrt` | 提供 `anr::tensorrt::DFN3`，使用原生 TensorRT engines 和 CUDA DSP/FFT；构建需要 TensorRT/CUDA SDK。 |
+| `openvino` | 提供 `anr::openvino::DFN3` 和 `Device`，原生 OpenVINO Runtime 直接导入原 ONNX；构建需要 C++ SDK，默认明确选择 CPU。 |
+| `opencl` | 提供 `anr::opencl::DFN3`，使用 OpenCL 1.2 GPU 完成全流程 FP32 推理，不依赖 ORT，不退回 CPU。 |
 | `ort-download-binaries` | 默认下载选项，只在启用 `ort` 后生效，本身不会启用后端。 |
 | `download-models` | 默认启用，将固定 DFN3 模型下载并校验到持久 Cargo 缓存；构建时可用 `ANR_MODEL_PATH` 指定本地文件。 |
 | `copy-models` | 默认启用，将选中的模型复制到 Cargo 程序、示例和测试旁的 `models/dfn3.onnx`，不会自动启用下载。 |
@@ -729,10 +733,6 @@ $env:OPENVINO_ROOT = 'C:\SDKs\openvino'
 ### 测试原生 Compute 和 ORT GPU 推理性能
 
 `anr-bench` 是工作区内的独立 benchmark，默认构建只测试原生 Compute，不依赖 ONNX Runtime。在仓库根目录运行：
-| `cuda` | 提供 `anr::cuda::DFN3`，使用 CUDA Driver/NVRTC 与 replay graph 完成全流程 FP32 推理，不依赖 ORT。 |
-| `tensorrt` | 提供 `anr::tensorrt::DFN3`，使用原生 TensorRT engines 和 CUDA DSP/FFT；构建需要 TensorRT/CUDA SDK。 |
-| `openvino` | 提供 `anr::openvino::DFN3` 和 `Device`，原生 OpenVINO Runtime 直接导入原 ONNX；构建需要 C++ SDK，默认明确选择 CPU。 |
-| `opencl` | 提供 `anr::opencl::DFN3`，使用 OpenCL 1.2 GPU 完成全流程 FP32 推理，不依赖 ORT，不退回 CPU。 |
 
 ```sh
 cargo run --release -p anr-bench -- --model models/dfn3.onnx --warmup 100 --frames 1000
@@ -740,6 +740,15 @@ cargo run --release -p anr-bench -- --backend vk,dx --json
 ```
 
 默认按 `gl,vk,dx` 顺序串行测试，每个后端预热 100 帧、正式测量 1000 帧，降噪强度为 80。Linux 使用 `--backend gl,vk`，D3D12 仅支持 Windows。`--backend` 可重复指定并保留顺序；`--model` 默认为 `models/dfn3.onnx`。允许 `--warmup 0`，`--frames` 必须大于零，`--strength` 必须是 0–100 的有限数值。
+
+默认原生 benchmark 构建已编入 CUDA 和 OpenCL，但默认选择列表不变。TensorRT 与 OpenVINO 需要显式启用 SDK features：
+
+```sh
+cargo run --release -p anr-bench -- --backend cuda,opencl --warmup 100 --frames 1000 --json
+cargo run --release -p anr-bench --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
+```
+
+第二条命令运行前按上文配置 SDK 和运行库路径。`cuda` / `tensorrt` 是独立原生后端，不是 `ort-cuda` / `ort-tensorrt` 的别名。
 
 可选的 `ort-cuda`、`ort-tensorrt`、`ort-directml` features 增加同名的 `--backend` 选项，不改变默认后端列表。DirectML 仅支持 Windows。还需选择运行库来源：`ort-download-binaries` 使用固定版本的预编译分发，`ort-load-dynamic` 通过 `ORT_DYLIB_PATH` 加载兼容 API 27 的共享库文件。
 
@@ -826,6 +835,10 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 | `anr-vk` | 直接使用原生 Vulkan Compute DFN3，不依赖 ORT 或 wgpu。 |
 | `anr-wgpu` | 使用 wgpu Compute DFN3，不依赖 ORT。 |
 | `anr-dx` | 使用原生 Windows Direct3D 12 Compute DFN3，不依赖 ORT、DirectML 或 wgpu。 |
+| `anr-cuda` | 完整固定模型 FP32 CUDA Driver/NVRTC 推理及 replay graph，不依赖 ORT。 |
+| `anr-tensorrt` | 真正的原生 TensorRT 神经网络 engines 与 CUDA DSP/FFT；需要 TensorRT/CUDA SDK。 |
+| `anr-openvino` | 原生 OpenVINO ONNX 导入与有状态推理，明确选择 CPU/GPU/NPU；需要 C++ SDK。 |
+| `anr-opencl` | 完整固定模型 FP32 OpenCL 1.2 硬件 GPU 推理，不退回 CPU。 |
 | `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
 | `anr-lite` | 使用 Burn 开发和训练 ANR-Lite-48，包含可微流式音频处理、可选的 VoiceBank-DEMAND 训练程序、CPU 与可选 wgpu 执行；不附带预训练权重。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
@@ -860,16 +873,3 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 CLI 的 Symphonia 解码器与 ORT 适配器使用的 `onnx-protobuf` 消息定义采用 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及执行 provider 所依赖的库也各有许可要求。源码获取、修改与二进制分发义务见 [第三方说明](crates/anr-cli/THIRD-PARTY-NOTICES.md)，项目双许可不替代这些条款。
 
 版本变更见 [CHANGELOG.md](CHANGELOG.md)，持续维护的发版步骤见 [CI and Release](.github/workflows/ci.yml)。
-默认原生 benchmark 构建已编入 CUDA 和 OpenCL，但默认选择列表不变。TensorRT 与 OpenVINO 需要显式启用 SDK features：
-
-```sh
-cargo run --release -p anr-bench -- --backend cuda,opencl --warmup 100 --frames 1000 --json
-cargo run --release -p anr-bench --features tensorrt,openvino -- --backend gl,vk,dx,cuda,tensorrt,openvino,opencl --openvino-device CPU --warmup 100 --frames 1000 --json
-```
-
-第二条命令运行前按上文配置 SDK 和运行库路径。`cuda` / `tensorrt` 是独立原生后端，不是 `ort-cuda` / `ort-tensorrt` 的别名。
-
-| `anr-cuda` | 完整固定模型 FP32 CUDA Driver/NVRTC 推理及 replay graph，不依赖 ORT。 |
-| `anr-tensorrt` | 真正的原生 TensorRT 神经网络 engines 与 CUDA DSP/FFT；需要 TensorRT/CUDA SDK。 |
-| `anr-openvino` | 原生 OpenVINO ONNX 导入与有状态推理，明确选择 CPU/GPU/NPU；需要 C++ SDK。 |
-| `anr-opencl` | 完整固定模型 FP32 OpenCL 1.2 硬件 GPU 推理，不退回 CPU。 |
