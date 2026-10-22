@@ -4,7 +4,7 @@ use crate::ShaderKind;
 #[cfg(any(feature = "glsl", feature = "spirv", feature = "hlsl"))]
 use anr_core::Result;
 
-/// The single shader source used by every GPU backend.
+/// Canonical WGSL kernels for wgpu and the GLSL, SPIR-V, and HLSL translations.
 pub fn wgsl(kind: ShaderKind) -> &'static str {
     match kind {
         ShaderKind::Network => include_str!("shaders/network.wgsl"),

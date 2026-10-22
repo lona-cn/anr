@@ -1,6 +1,6 @@
 """Build browser WebGPU bindings with installed Cargo and wasm-bindgen tools.
 
-Run from any directory: python tools/build_wgpu_web.py
+Run from the workspace root: python tools/build_wgpu_web.py
 No tools, targets, or models are installed or downloaded by this helper.
 """
 from __future__ import annotations

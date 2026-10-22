@@ -1,8 +1,8 @@
 //! Fixed DFN3 model data, dispatch schedule and synchronous stream handling.
 //!
-//! This crate contains no device API or inference runtime. The external ONNX
-//! file is a hash-locked parameter container. Backends execute the same fixed
-//! compute shaders, while owning their native devices and synchronization.
+//! This crate validates the supported ONNX bytes and supplies parameters,
+//! dispatch records, and kernels to fixed-model compute backends. Device APIs
+//! and device synchronization belong to each backend.
 mod model;
 mod network;
 pub mod shaders;
@@ -22,7 +22,7 @@ pub const STATE_SIZE: usize = 45_304;
 /// Size of one packed uniform parameter block, in bytes.
 pub const PARAMETER_BYTES: u32 = 128;
 
-/// The three fixed compute programs used by every backend.
+/// Compute stages used by the shared fixed-dispatch schedule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShaderKind {
     Network,
@@ -30,7 +30,7 @@ pub enum ShaderKind {
     Fft,
 }
 impl ShaderKind {
-    /// Stable pipeline order for native backends.
+    /// Stable pipeline-array order for fixed-dispatch executors.
     pub const ALL: [Self; 3] = [Self::Network, Self::Dsp, Self::Fft];
     /// Index in a three-element pipeline array.
     pub const fn index(self) -> usize {

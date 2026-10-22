@@ -1,6 +1,13 @@
 /target
 /models
-RELEASING.md
 __pycache__/
 /docs/superpowers
 /datasets
+
+RELEASING.md
+
+# Keep project documentation without including downloaded audio.
+!/RELEASING.md
+!/datasets/
+/datasets/*
+!/datasets/DATASETS.md

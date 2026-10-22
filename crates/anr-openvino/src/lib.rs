@@ -7,12 +7,13 @@
 //! inference. NPU hardware may execute FP16 despite FP32 model inputs; NPU is
 //! not advertised as meeting the FP32 reference tolerance.
 //!
-//! Building requires the official OpenVINO C++ SDK (including the ONNX frontend)
-//! via `OPENVINO_ROOT` or `OpenVINO_DIR`. Official Python wheel include/libs
-//! layouts are accepted. At runtime deploy `anr_openvino_native` beside the
-//! executable and the official Runtime/plugins, or set `ANR_OPENVINO_SHIM` and
-//! `ANR_OPENVINO_RUNTIME` to their shared-library paths. Build-tree paths are
-//! also searched, so local SDK builds need no global installation.
+//! Building requires the official OpenVINO C++ SDK via `OPENVINO_ROOT` or
+//! `OpenVINO_DIR`. Official Python wheel include/libs layouts are accepted.
+//! At runtime deploy `anr_openvino_native` beside the executable, plus the
+//! official Runtime, ONNX frontend, and selected device plugin.
+//! `ANR_OPENVINO_SHIM` and `ANR_OPENVINO_RUNTIME` override the shim and Runtime
+//! shared-library paths. Build-tree paths are also searched, so local SDK
+//! builds need no global installation.
 mod ffi;
 
 use anr_core::{NoiseReduction, Result};

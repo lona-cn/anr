@@ -1,10 +1,10 @@
 # 第三方组件与分发说明
 
-`anr-cli` 自有代码采用 MIT OR Apache-2.0；这不改变依赖、运行库或模型的许可。本文件说明主要边界和源码获取方法，不代替各组件的完整许可，也不是任意 feature 组合的完整二进制许可清单。发布者应依据实际 Cargo.lock、启用 features、链接或动态加载的运行库和所附动态库，保留对应版权、许可及 NOTICE/ThirdPartyNotices 文件。
+`anr-cli` 自有代码采用 MIT OR Apache-2.0。依赖、原生运行库、驱动和模型各有自己的许可；分发时按实际 `Cargo.lock`、features 和随附二进制收集版权、许可及适用 NOTICE。本说明列出主要组件与源码入口，不是所有 feature 组合的完整许可清单。
 
 ## 音频解码：Symphonia 0.5.5（MPL-2.0）
 
-Symphonia 是 Philip Deljanov 及其贡献者的纯 Rust 容器/codec 实现。当前 CLI 启用 `all`，不通过系统 FFmpeg 解码。
+CLI 使用纯 Rust 的 Symphonia 解码，启用 `all`，不依赖系统 FFmpeg。其源码通知为 **Copyright (c) 2019–2022 The Project Symphonia Developers**；其他文件中的原始通知也应保留。
 
 - 上游源码与原始版权通知：[pdeljanov/Symphonia](https://github.com/pdeljanov/Symphonia)。
 - 完整许可：[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/)。
@@ -17,21 +17,22 @@ Symphonia 是 Philip Deljanov 及其贡献者的纯 Rust 容器/codec 实现。�
 - [symphonia-codec-aac](https://docs.rs/crate/symphonia-codec-aac/0.5.5/source/)、[symphonia-codec-adpcm](https://docs.rs/crate/symphonia-codec-adpcm/0.5.5/source/)、[symphonia-codec-alac](https://docs.rs/crate/symphonia-codec-alac/0.5.5/source/)、[symphonia-codec-pcm](https://docs.rs/crate/symphonia-codec-pcm/0.5.5/source/)、[symphonia-codec-vorbis](https://docs.rs/crate/symphonia-codec-vorbis/0.5.5/source/)。
 - [symphonia-format-caf](https://docs.rs/crate/symphonia-format-caf/0.5.5/source/)、[symphonia-format-isomp4](https://docs.rs/crate/symphonia-format-isomp4/0.5.5/source/)、[symphonia-format-mkv](https://docs.rs/crate/symphonia-format-mkv/0.5.5/source/)、[symphonia-format-ogg](https://docs.rs/crate/symphonia-format-ogg/0.5.5/source/)、[symphonia-format-riff](https://docs.rs/crate/symphonia-format-riff/0.5.5/source/)。
 
-MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码（包括对这些文件的修改）时仍以 MPL-2.0 提供并保留实质性许可通知；分发包含这些组件的 executable 时，也必须及时以合理方式提供对应的 Source Code Form，并告诉接收者如何取得，收费不超过分发成本。它不要求把仅与其组合、位于独立文件中的全部 CLI 代码改成 MPL，但不能以项目双许可限制接收者对 MPL 源码的权利。
+[MPL-2.0 第 3.1–3.4 条](https://www.mozilla.org/en-US/MPL/2.0/#responsibilities)规定：
 
-未修改的 registry 组件可以从上述精确版本入口取得。若构建者使用修改版或 patch，**必须另行提供实际使用的修改后源码**，只有上游链接不够；应随分发提供源码归档或有效下载位置，并保留适用通知。需要离线归档时，可从工作区用 `cargo vendor --locked <源码归档目录>` 获取锁定的依赖源码，再核对实际构建中的 patch 和版权/许可文件。二进制包应携带本说明、MPL 完整文本及对应源码获取说明；不能仅附项目的 MIT/Apache 文本。
+- 被覆盖源码及其修改须继续按 MPL-2.0 提供，告知接收者许可及其获取方式，并保留版权、专利、免责声明等通知的实质内容。
+- 分发包含这些组件的 executable 时，须告知接收者如何及时以合理方式取得对应 Source Code Form，收费不超过分发成本。独立文件中的 CLI 代码可以采用其他许可，但不得限制接收者对 MPL 源码的权利。
+- 未修改的组件可从上述精确版本入口取得；使用修改版或 patch 时，须提供**实际使用的修改后源码**，只有上游链接不够。分发包应附源码归档或有效下载位置，并提供 MPL 完整文本或明确的许可获取入口。离线归档可用 `cargo vendor --locked <源码归档目录>` 收集锁定依赖，再核对实际 patch 和通知。
 
-音频格式实现的软件许可也不是针对所有地区的 codec 专利或其他权利保证；具体使用和分发场景仍由分发者核实。
+软件许可不构成 codec 专利或其他权利在所有地区均已获授权的保证。
 
 ## ONNX 消息解析：onnx-protobuf 0.2.3（MPL-2.0）
 
-启用 ORT 时，加载前的内存图转换使用未修改的 `onnx-protobuf` 0.2.3；它提供完整 ONNX 消息，并保留未知 protobuf 字段。
+ORT 适配器使用 `onnx-protobuf` 解析并转换内存中的 ONNX 图。0.2.3 的 package 作者信息为 Aster；原始许可和文件通知以该版本源码为准。
 
 - 精确版本源码：[docs.rs 源码](https://docs.rs/crate/onnx-protobuf/0.2.3/source/)，或 [crates.io 源码包](https://crates.io/api/v1/crates/onnx-protobuf/0.2.3/download)。
 - 上游：[oovm/Airs 的 onnx-protobuf](https://github.com/oovm/Airs/tree/dev/projects/onnx-protobuf)。
 - 完整许可：[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/)。与上述 Symphonia 相同的文件级源码获取、修改和二进制分发义务也适用于此组件，不能只提供项目的双许可。
 - 生成的消息要求精确的 `protobuf` 3.4.0 运行库；该组件采用 MIT，源码和许可见 [protobuf 3.4.0](https://docs.rs/crate/protobuf/3.4.0/source/)。
-
 
 ## 重采样、WAV 和其他 Rust 依赖
 
@@ -43,13 +44,25 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 | file-id 0.2.3 | MIT OR Apache-2.0 | [notify-rs/notify](https://github.com/notify-rs/notify)，[精确版本源码](https://docs.rs/crate/file-id/0.2.3/source/) |
 | clap、anyhow、ctrlc、tempfile、serde、serde_json | 各自声明 MIT OR Apache-2.0 | [clap](https://github.com/clap-rs/clap)、[anyhow](https://github.com/dtolnay/anyhow)、[ctrlc](https://github.com/Detegr/rust-ctrlc)、[tempfile](https://github.com/Stebalien/tempfile)、[serde](https://github.com/serde-rs/serde)、[serde_json](https://github.com/serde-rs/json) |
 
-以上不省略传递依赖义务；以实际解析版本的 package 源码及许可为准。尤其 MIT 的版权和许可文本、Apache-2.0 的许可及适用 NOTICE 不可用项目自身的版权通知替换。
+传递依赖同样保留各自义务。MIT 的版权及许可文本、Apache-2.0 的许可及适用 NOTICE，均不能用项目自身的版权声明替换；ISC、Zlib 等依赖也须保留其要求的通知。
 
 ## 可选 Compute 后端
 
-只启用 `gl`、`gles`、`vk`、`wgpu`、`dx` 的构建不链接 Rust ORT 或 ONNX Runtime。`gl` 和 `gles` 共用 [glow](https://github.com/grovesNL/glow)、[glutin](https://github.com/rust-windowing/glutin) 和 raw-window-handle 调用系统驱动、管理原生上下文；GLES 生成 GLSL ES 310 并要求真实 ES context。`vk` 使用 [ash](https://github.com/ash-rs/ash)；`wgpu` 使用 [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu) 的原生硬件后端；`dx` 使用 [windows-rs](https://github.com/microsoft/windows-rs) 调用系统 D3D12、DXGI 和 D3DCompiler 47，不是 DirectML。驱动与系统库不随 crate 安装或打包，分发者应另行核对运行环境要求。
+只启用 `gl`、`gles`、`vk`、`wgpu`、`dx` 不引入 Rust ORT 或 ONNX Runtime。主要绑定、编译器和参数处理依赖如下；链接指向精确版本的源码及其许可文件：
 
-共用 WGSL 算子通过 [Naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) 翻译为 GLSL、GLSL ES、SPIR-V 或 HLSL。参数解码使用 [prost](https://github.com/tokio-rs/prost)，摘要使用 [sha2](https://github.com/RustCrypto/hashes)，字节视图使用 [bytemuck](https://github.com/Lokathor/bytemuck)。各包及传递依赖保留自己的许可和版权通知；无 ORT 分发仍应按实际 Cargo.lock 收集对应文本，不能用项目许可代替。模型权重的授权与代码依赖分别处理。
+| 组件 | 许可 | 用途 / 源码 |
+| --- | --- | --- |
+| glow 0.16.0 | MIT OR Apache-2.0 OR Zlib | [GL/GLES 调用](https://docs.rs/crate/glow/0.16.0/source/) |
+| glutin 0.32.3 | Apache-2.0 | [原生 GL/GLES context](https://docs.rs/crate/glutin/0.32.3/source/) |
+| raw-window-handle 0.6.2 | MIT OR Apache-2.0 OR Zlib | [窗口句柄](https://docs.rs/crate/raw-window-handle/0.6.2/source/) |
+| ash 0.38.0+1.3.281 | MIT OR Apache-2.0 | [Vulkan 绑定](https://docs.rs/crate/ash/0.38.0+1.3.281/source/) |
+| wgpu / Naga 30.0.1 | MIT OR Apache-2.0 | [wgpu](https://docs.rs/crate/wgpu/30.0.1/source/) 原生/WebGPU 后端；[Naga](https://docs.rs/crate/naga/30.0.1/source/) 将 WGSL 转为 GLSL、GLSL ES、SPIR-V、HLSL |
+| windows 0.62.2 | MIT OR Apache-2.0 | [D3D12、DXGI、D3DCompiler 47 绑定](https://docs.rs/crate/windows/0.62.2/source/)；不是 DirectML |
+| prost 0.14.4 | Apache-2.0 | [ONNX 参数解析](https://docs.rs/crate/prost/0.14.4/source/) |
+| sha2 0.10.9 | MIT OR Apache-2.0 | [模型摘要](https://docs.rs/crate/sha2/0.10.9/source/) |
+| bytemuck 1.25.2 | Zlib OR Apache-2.0 OR MIT | [字节视图](https://docs.rs/crate/bytemuck/1.25.2/source/) |
+
+这些 Rust 组件的许可不覆盖系统图形库、驱动或模型。crate 不安装驱动；分发者需按目标平台配置硬件、真实 GL/GLES context 或其他运行环境，并按实际依赖版本保留通知。
 
 ## 原生 CUDA、TensorRT、OpenVINO 与 OpenCL
 
@@ -63,16 +76,24 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 | OpenVINO Runtime、ONNX frontend、设备 plugins | `anr-openvino` 的私有 shim 调用原生 C++ Runtime。OpenVINO 项目采用 **Apache-2.0**，见 [上游 LICENSE](https://github.com/openvinotoolkit/openvino/blob/master/LICENSE)；分发时保留实际所用版本的许可、版权、适用 NOTICE 和 [third-party-programs 通知](https://github.com/openvinotoolkit/openvino/tree/master/licensing)。wheel 只是 SDK/runtime 的一种来源，不免除这些义务，也不使 Python 成为 CLI 运行依赖。GPU/NPU plugin 依赖的系统驱动及其他组件须按各自条款另行核对。 |
 | OpenCL ICD loader 与厂商 GPU runtime/driver | `anr-opencl` 通过 `libloading` 动态加载系统 OpenCL；不内置 ICD loader 或厂商实现。[Khronos OpenCL ICD Loader](https://github.com/KhronosGroup/OpenCL-ICD-Loader) 的 [Apache-2.0 许可](https://github.com/KhronosGroup/OpenCL-ICD-Loader/blob/main/LICENSE) 只覆盖该实现，不能据此推断本机 `OpenCL.dll` / `libOpenCL.so` 的实际来源或厂商 GPU ICD 的许可。具体驱动/runtime 按供应商条款处理，例如 [NVIDIA 驱动许可](https://www.nvidia.com/en-us/drivers/nvidia-license/)；loader 本身不提供硬件 GPU 执行。 |
 
-私有 `anr_tensorrt_native` / `anr_openvino_native` shared shim 的本项目源码仍采用 MIT OR Apache-2.0，但分发 shim 不会替代其 vendor runtime 的分发审查；Rust `libloading`、构建依赖 `cc` 及传递依赖也保留各自通知。SDK headers、链接库、运行库、frontend/plugin 和驱动是不同组件，不应把整个 SDK 目录无差别放入安装包。默认 Release ZIP 仍仅携带 CPU ORT 及既有资产；自行提供原生后端包时，须收集真实依赖闭包及每项适用许可，不将下载/编译成功视为取得再分发授权。
+私有 `anr_tensorrt_native` / `anr_openvino_native` shared shim 的本项目源码采用 MIT OR Apache-2.0；其 vendor runtime 仍需单独审查。动态加载依赖 `libloading` 采用 ISC，构建依赖 `cc` 采用 MIT OR Apache-2.0，传递依赖按实际版本处理。SDK headers、链接库、运行库、frontend/plugin 和驱动应分别列出，不要整目录复制 SDK。默认应用 ZIP 包含 CPU ORT 和模型，不包含这些原生后端运行库；定制包应收集实际依赖闭包及每项适用许可。
 
 ## Rust ORT 绑定与 ONNX Runtime 是两个组件
 
 - Rust `ort` / `ort-sys` 固定为 **2.0.0-rc.15**，声明 **MIT OR Apache-2.0**，来自 [pykeio/ort](https://github.com/pykeio/ort)。其 [ort 源码](https://docs.rs/crate/ort/2.0.0-rc.15/source/) 与 [ort-sys 源码](https://docs.rs/crate/ort-sys/2.0.0-rc.15/source/) 含独立版权和许可。
-- Microsoft **ONNX Runtime** 是实际执行推理的原生运行库，不是 Rust 绑定的另一名称；其 [上游源码](https://github.com/microsoft/onnxruntime)、[MIT 许可](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) 和 [ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt) 需独立处理。Rust 绑定的默认预编译分发为 1.31.0；GitHub 应用 ZIP 改用 API 27 兼容的 CPU 1.28.0 共享库，Windows/Linux/macOS arm64 来自固定摘要的官方包，Intel macOS 来自固定提交的源码构建。ZIP 的 `licenses/onnxruntime/` 保留**实际分发版本**的 `LICENSE` 与 `ThirdPartyNotices.txt`，不以源仓库当前版本的文件替代。默认分发、自建库和 `ORT_DYLIB_PATH` 指定库的组件集合可能不同。
+- Microsoft **ONNX Runtime** 是实际推理的原生运行库；1.28.0 为 MIT，**Copyright (c) Microsoft Corporation**。对应版本的[源码](https://github.com/microsoft/onnxruntime/tree/v1.28.0)、[LICENSE](https://github.com/microsoft/onnxruntime/blob/v1.28.0/LICENSE)、[ThirdPartyNotices](https://github.com/microsoft/onnxruntime/blob/v1.28.0/ThirdPartyNotices.txt) 独立于 Rust 绑定处理。绑定默认下载分发使用 1.31.0；GitHub 应用 ZIP 使用 API 27 兼容的 CPU 1.28.0，Windows/Linux/macOS arm64 来自固定摘要的官方包，Intel macOS 来自固定提交的源码构建。ZIP 的 `licenses/onnxruntime/` 保留**实际分发版本**的通知，不用其他版本替代。自建库或 `ORT_DYLIB_PATH` 指定库应核对自己的组件集合。
 - CUDA、TensorRT、DirectML、CoreML、XNNPACK 等 provider 及其驱动、SDK、系统框架或随附库各有适用条款。选择 Cargo feature 不代表取得其再分发许可，也不表示这些库已被安装。分发者只应携带有权分发的运行库及其通知，不把 Microsoft、NVIDIA、Apple 或其他供应商组件列为 anr contributors 自有代码。
 
 ## 模型权重与测试控制图
 
-DFN3 模型内容不打包进 Rust crate；默认 `download-models` 在构建时从 [固定模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 下载并校验，`copy-models` 将模型复制到构建产物旁，`cargo install` 可继续使用持久缓存。关闭 defaults 可禁用下载，运行时不会联网获取模型。GitHub 应用 ZIP 明确包含 `models/dfn3.onnx`。维护者已确认有权将 SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9` 对应的文件按 **MIT OR Apache-2.0** 分发；两份许可、NOTICE 和资产清单随 ZIP 的 `models/` 一起提供，也可从该模型 Release 获取。`copy-models` 只复制模型文件；自行分发构建产物时，应另外携带适用许可及通知。其他权重、训练数据或导出文件的使用与分发权仍按实际来源确认，不能由 [DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可推断。
+Rust 源码包不包含完整 DFN3 模型。默认 `download-models` 在构建时从[固定模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 下载并校验，`copy-models` 只复制模型文件；`cargo install` 可使用持久缓存。关闭 defaults 可禁用下载，运行时不联网获取模型。自行分发构建产物时，须另附模型许可和通知。
+
+GitHub 应用 ZIP 包含 `models/dfn3.onnx`。维护者已确认有权按 **MIT OR Apache-2.0** 分发这份文件，SHA-256 为：
+
+```text
+fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9
+```
+
+两份模型许可、NOTICE 和资产清单随 ZIP 放在 `models/`，也可从上述模型 Release 获取。该授权仅适用于这份文件，不声明上游作者身份；其他模型、权重、训练数据和导出文件的权利按各自来源确认，不能由 [DeepFilterNet 源码仓库](https://github.com/Rikorose/DeepFilterNet) 的双许可推断。
 
 `tests/fixtures` 中本项目自制的微型 ONNX 控制图用于验证输入输出、状态和错误处理，不含 DFN3 权重，也不宣称具有降噪能力。CI 同时使用这些控制图和经 Release 摘要校验的真实模型；完整模型仍不进入 Rust 源码包。

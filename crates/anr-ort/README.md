@@ -4,21 +4,15 @@
 
 ## English
 
-`anr-ort` runs a DeepFilterNet3 (DFN3) model with ONNX Runtime on **48 kHz, mono `f32` samples**. It provides `DFN3` to load the model and process audio in chunks.
+Stateful DeepFilterNet3 (DFN3) inference with ONNX Runtime: **48 kHz, mono `f32` audio**, processed in 480-sample frames. This crate provides the ORT session wrapper and model preparation APIs; it does not decode audio, resample, or download models. The [`anr` facade](../anr/README.md) adds model discovery and independent native backends. Requires the latest stable Rust toolchain.
 
-It does not read microphones, decode audio files, or resample. Requires the **latest stable Rust toolchain**. Bring your own model: models are not included in the Rust packages or downloaded automatically.
-
-This is specifically the ORT implementation. For OpenGL, GLES, Vulkan, wgpu, or native D3D12 without ONNX Runtime, choose a compute feature of the [`anr` facade](../anr/README.md#compute-backends-without-ort). Those backends use `DFN3::from_file(path)` without an ORT environment and require the fixed model hash; they are not ORT execution providers.
-
-### Denoise your first samples
+### CPU quickstart
 
 ```toml
 [dependencies]
 anr-core = "0.1.1"
 anr-ort = "0.1.1"
 ```
-
-The dependency examples use version `0.1.1`. To use a local checkout, replace the version dependencies with `path` dependencies pointing to the crate directories.
 
 ```rust,no_run
 use anr_core::{NoiseReduction, Result};
@@ -27,48 +21,105 @@ use anr_ort::DFN3;
 fn main() -> Result<()> {
     anr_ort::initialize_runtime()?;
     let environment = anr_ort::ort::init().build().map_err(anr_core::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
-    denoiser.set_factor(80.0);
+    let mut reducer = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    reducer.set_factor(80.0);
 
     let input = [0.0_f32; DFN3::FRAME_SIZE];
     let mut output = [0.0_f32; DFN3::FRAME_SIZE];
-    denoiser.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
-    denoiser.reset();
+    reducer.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
+    reducer.reset();
     Ok(())
 }
 ```
 
-The example processes silence; replace it with your own samples. The model path is relative to your program's working directory. `run`, `set_factor`, and `reset` come from `anr_core::NoiseReduction`, so import the trait as shown.
+The model path is relative to the application's working directory. `run`, `factor`, `set_factor`, and `reset` are methods of `anr_core::NoiseReduction`; import the trait. The example processes one silent frame.
 
-### Keep one denoiser per stream
+### Runtime and Cargo features
 
-The model uses information from earlier audio, so keep a separate `DFN3` instance for each stream. Call `reset()` before switching recordings or restarting playback; this clears the audio state without changing the strength.
+`anr_ort::ort` re-exports the exact runtime API used by this crate. `Cargo.lock` pins `ort` and `ort-sys` to `2.0.0-rc.15`; the workspace enables `std` and `api-27`, without `ndarray`. Two runtime versions serve different build paths:
 
-Use chunks that are multiples of 480 samples where possible. The model processes 480 samples, or 10 ms of audio, per frame. A short final frame is padded with zeros, processed as a full frame, and trimmed back to the requested length. The padding still affects later state, so many short calls may produce different results from one call over the whole recording. For live audio, collect samples into multiples of 480 first.
+- The pinned `ort-sys` downloader's distributions use ONNX Runtime **1.31.0**.
+- The repository's application release configuration, `.github/onnxruntime.json`, pins Microsoft ONNX Runtime **1.28.0**. This is not the Cargo downloader's version.
 
-The library does not compensate for model latency and has no end-of-stream flush operation.
+A supplied library must expose API 27 and provide the operators/providers the application needs; a version label alone does not establish compatibility with a custom or minimal build.
 
-### Check the input and output
+| Feature | Effect |
+| --- | --- |
+| `download-binaries` (default) | Enables the upstream runtime downloader, shared-library copying, and native TLS. Requires an available distribution for the target. |
+| `load-dynamic` | Loads an application-supplied shared library at runtime. |
+| `cuda`, `tensorrt`, `directml`, `coreml`, `xnnpack` | Compiles the corresponding ORT provider support; does not select a device or install vendor runtimes/drivers. |
 
-- Supply at least one input sample.
-- Use a sample rate of 48,000 Hz.
-- Allocate an output slice with the same length as the input.
+For a supplied runtime:
 
-If any of these checks fail, the output and processing state stay unchanged. An error during model execution may leave both partly updated; it does not undo work already done. Call `reset()` before reusing the stream after an inference failure; recreate the instance if the underlying runtime or session can no longer run.
+```toml
+anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
+```
 
-### Adjust the strength
+Set `ORT_DYLIB_PATH` to the shared-library **file**, then call `initialize_runtime()` before `ort::init().build()`. Unset or empty uses the platform-default name (`onnxruntime.dll`, `libonnxruntime.so`, or `libonnxruntime.dylib`). The helper returns loading failures, permits retries after failed loads, and reuses an already loaded library. In linked builds it is a no-op. It does not create an `Environment`; the application configures, builds, and retains that environment for session creation.
 
-`set_factor` accepts `0..=100` and converts it to dB using `round(factor / 100 * 60)`. To set `0..=60` dB directly, use `set_atten_lim_db`; read it with `get_atten_lim_db`.
+Cargo features are additive across a dependency graph. Disabling defaults on one dependency does not remove `download-binaries` enabled elsewhere. The facade's feature names use the `ort-` prefix; `ort-load-dynamic` and the provider features also enable its `ort` backend.
 
-Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive and negative infinity use the upper and lower bounds respectively.
+### Environment and session configuration
 
-`set_factor` rounds to whole dB, while `set_atten_lim_db` keeps fractional values. `factor()` converts the actual dB setting back and rounds it, so it may not return exactly what you passed in. These values limit how much the model may attenuate sound; they are not a mix between the original and denoised audio.
+`DFN3::from_file(&environment, path)` is the CPU convenience constructor. It explicitly selects ORT's built-in CPU provider, disables environment provider lists and automatic accelerator selection, uses an independent pool with one intra-op thread, and disables intra/inter-op spinning. It works without device discovery in minimal runtimes.
 
-`set_factor(0.0)` still executes the ONNX graph. The supplied DFN3 model's zero-attenuation branch is not an audio bypass; skip the reducer in your application if you need unchanged input. The dB setters/getters above are specific to this ORT type, not methods of the shared trait or compute frontends.
+For other settings, configure a `SessionBuilder`, use `session_from_file(builder, path, &providers)`, and pass the result to `DFN3::new(session)`. For example, with the `cuda` feature and its runtime dependencies:
 
-### Required model inputs and outputs
+```rust,no_run
+use anr_core::NoiseReduction;
+use anr_ort::{DFN3, ort, session_from_file};
 
-`DFN3::from_file(&environment, path)` loads a model using an application-owned `Environment`; `DFN3::new(session)` uses a configured ONNX Runtime session. Both require exactly these three inputs and three outputs, all `f32`. Input order does not matter. `[]` is a scalar; `[1]` is a one-element vector.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    anr_ort::initialize_runtime()?;
+    let environment = ort::init().build()?;
+    let builder = ort::session::Session::builder(&environment)?
+        .with_no_environment_execution_providers()?
+        .with_independent_thread_pool()?
+        .with_intra_threads(1)?
+        .with_intra_op_spinning(false)?
+        .with_inter_op_spinning(false)?
+        .with_parallel_execution(false)?;
+    let providers = [ort::ep::CUDA::default().build()];
+    let session = session_from_file(builder, "models/dfn3.onnx", &providers)?;
+    let mut reducer = DFN3::new(session)?;
+    reducer.set_factor(80.0);
+    Ok(())
+}
+```
+
+For DirectML, also disable memory patterns with `with_memory_pattern(false)` and keep sequential execution. `session_from_file` preserves the builder's settings except for requested provider registration and the external-weight directory described below. Registration errors are returned rather than silently substituting a different provider. Ordinary per-operator CPU placement remains allowed: unsupported or CPU-preferred operators may run on CPU beside a GPU provider. `DFN3::new` preserves the session's placement policy.
+
+Audio and state tensors are CPU-backed even for GPU sessions; ORT handles transfers. Buffers are allocated during construction, with two alternating state buffers rather than a per-frame state copy. This is a synchronous API, not a guarantee of audio-callback safety.
+
+### In-memory model preparation
+
+`session_from_file` prepares CUDA, TensorRT, and DirectML graphs before session creation. If several are requested, target selection is TensorRT, then DirectML, then CUDA. Other providers retain upstream file loading.
+
+CUDA expands `FusedConv(Sigmoid)` while retaining its supported ReLU and matrix fusions. TensorRT/DirectML also expand `FusedConv(Relu)` and eligible non-transposed `FusedMatMul`, preserving `alpha`; scaled-matmul expansion requires opset 13 or newer.
+
+All three targets lower statically indexed state sequences and proven-safe fixed-shape tensor conditionals. `float32` `NonZero` used only for an all-zero predicate becomes a fixed-shape reduction. Proven uniform boolean selections and stateless dead dependencies are removed; unknown or stateful computations keep their execution dependencies. Runtime conditions and attenuation remain live. Unproven patterns remain unchanged.
+
+Preparation happens once per session, changes neither source files nor weights, and creates no derived ONNX file or disk cache. Relative external weights resolve beside the source model unless the builder already specifies `session.model_external_initializers_file_folder_path`. This prepared-file path requires a UTF-8 model directory.
+
+Callers with bytes can use the public API directly:
+
+```rust,no_run
+use anr_ort::{ModelTarget, ort, prepare_model};
+
+fn load_bytes(
+    mut builder: ort::session::builder::SessionBuilder,
+    bytes: &[u8],
+) -> Result<ort::session::Session, Box<dyn std::error::Error>> {
+    let prepared = prepare_model(bytes, ModelTarget::DirectML)?;
+    Ok(builder.commit_from_memory(prepared.as_ref())?)
+}
+```
+
+`prepare_model(&[u8], ModelTarget) -> anr_core::Result<Cow<'_, [u8]>>` borrows unchanged input and owns rewritten bytes. Available targets are `Cuda`, `TensorRT`, and `DirectML`. It does not register providers or configure session options; the example assumes the caller has done that. In-memory callers must configure external-weight resolution themselves. Direct upstream `commit_from_file` bypasses preparation; `DFN3::new` cannot alter an already-loaded graph.
+
+### Model port contract
+
+`DFN3::new(session)` validates exactly three inputs and three outputs, all `f32`. Names, not port order, identify tensors. `[]` is scalar and `[1]` is a one-element vector.
 
 | Direction | Name | Runtime shape |
 | --- | --- | --- |
@@ -79,65 +130,36 @@ Out-of-range values are clamped. `NaN` leaves the setting unchanged; positive an
 | Output | `new_states` | `[45304]` |
 | Output | `lsnr` | `[]` or `[1]` |
 
-A one-dimensional tensor may declare a symbolic length. Loading checks the rank and any fixed lengths; symbolic lengths do not change the required 480 audio samples and 45,304 state values at runtime. The constants are `DFN3::SAMPLE_RATE = 48000`, `FRAME_SIZE = 480`, and `STATE_SIZE = 45304`.
+One-dimensional symbolic lengths are accepted in declarations; execution still requires these fixed audio/state lengths. Constants are `DFN3::SAMPLE_RATE = 48000`, `FRAME_SIZE = 480`, and `STATE_SIZE = 45304`. ORT checks actual audio/state outputs against preallocated buffers. `lsnr` is checked only in the declaration and is not requested or returned.
 
-Audio and state outputs use preallocated buffers, and ONNX Runtime checks their actual lengths. For `lsnr`, only the declared type and shape are checked; its result is neither read nor returned. Extra inputs or outputs, different ranks, or a different meaning or ordering of state values require changes to the implementation. Passing these checks does not prove the model is correct or that it will sound good on your audio.
+Unlike the native compute implementations, this crate does not require one file hash. The graph must nevertheless use the expected state ordering and attenuation semantics; matching shapes alone is insufficient. The upstream multi-file DeepFilterNet export is not this single-frame interface.
 
-Unlike the compute backends, `anr-ort` does not pin the file to one SHA-256 value. It validates the port types/shapes above, but the graph must also use the expected state layout and attenuation semantics. Equal port shapes alone do not establish semantic compatibility.
+### Streaming, errors, and strength
 
-### Download the CPU runtime or supply your own
+- Keep one reducer per continuous channel/stream. `reset()` clears state and preserves strength.
+- `run` accepts any nonzero input length at 48,000 Hz with equal-length output. Each short final frame is zero-padded to 480 samples; padding advances a full frame of state, while only requested samples are returned. Prefer multiples of 480 between calls.
+- There is no model-latency compensation or end-of-stream flush. Audio decoding, channel separation, and resampling belong to the application.
+- Empty input, wrong rate, and unequal lengths return shared validation errors without changing output/state. Inference failures may leave earlier output written and state partly advanced. Reset before reuse; recreate if the runtime/session is no longer usable. See [`anr-core`](../anr-core/README.md) for error variants.
 
-`anr_ort::ort` exposes the ONNX Runtime types used by this crate. The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. The default prebuilt runtime is 1.31.0; API-27-compatible self-provided libraries such as 1.28.0 are also supported.
+Initial attenuation is **3 dB** (`factor() == 5`). `set_factor` clamps to `0..=100` and sets `round(factor / 100 * 60)` dB. `factor()` converts the actual dB setting back to the percentage scale and rounds, so readback may differ from the supplied value. `set_atten_lim_db` / `get_atten_lim_db` access `0..=60` dB directly and preserve fractional dB. Both setters ignore NaN and saturate infinities at the nearest bound.
 
-The default `download-binaries` feature downloads and copies the CPU runtime libraries at build time, requiring network access and platform support. To use a runtime you already have, disable default features and enable `load-dynamic`:
-
-```toml
-anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
-```
-
-Before building an environment, call `anr_ort::initialize_runtime()` to load `ORT_DYLIB_PATH` through the fallible loader. The variable points to an API-27-compatible shared library file, not a directory; unset or empty uses the platform's default name. Failed loads can be retried, and a loaded library is reused. This function does not build an environment or replace the host's settings. Build and keep one `Environment` in your application and share it between models. Disabling defaults removes the downloader and its TLS/OpenSSL build dependencies.
-
-#### Device features do not select a GPU
-
-`cuda`, `tensorrt`, `directml`, `coreml`, and `xnnpack` compile support for the corresponding libraries. They do not select a device or install drivers or other required libraries.
-
-`DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, configure a `SessionBuilder`, call `anr_ort::session_from_file(builder, path, &providers)`, then pass the returned session to `DFN3::new(session)`.
-
-GPU sessions normally retain ORT's per-operator CPU placement: unsupported or CPU-preferred operators may run on CPU alongside the selected GPU provider. `DFN3::new(session)` preserves the session's settings rather than requiring GPU-only execution. The CLI and benchmark use this as their default policy while treating explicit provider registration failures as errors.
-
-`session_from_file` registers the supplied providers with registration errors enabled and preserves the builder's other settings. Before CUDA/TensorRT session creation, it reads the model and prepares an in-memory copy: sigmoid `FusedConv` is expanded into standard operators; TensorRT also lowers statically indexed state sequences to `Split` and eligible fixed-shape, pure tensor conditionals to `Where`. Dynamic conditions and attenuation remain live. Patterns whose eager execution cannot be proven safe remain unchanged and may still be unsupported by the provider.
-
-Preparation runs once per new session, not once per audio frame. The source file and weights are not rewritten; no derived ONNX file or disk cache is created. CPU, DirectML, and other providers keep file loading without these rewrites. Relative external weights resolve beside the source model unless the builder explicitly specifies another directory. For an already-owned byte buffer, use `prepare_model(bytes, ModelTarget::Cuda)` or `ModelTarget::TensorRT`, then `commit_from_memory` on your configured builder. `prepare_model` does not select a provider; direct upstream `commit_from_file` bypasses preparation, and `DFN3::new` cannot repair an already-created session.
-
-
-In the facade, `ort-directml` compiles support for ORT's DirectML provider; `dx` exposes the separate native D3D12 implementation. Similarly, `gl`, `gles`, `vk`, and `wgpu` are features of the facade, not features of `anr-ort`. Use [`anr-cli`](../anr-cli/README.md) for file decoding, resampling, per-channel processing, and explicit backend/provider selection.
+Strength is an attenuation limit, not output gain or a dry/wet mix. Zero still runs the graph and is not an unchanged-audio bypass. The dB methods belong only to this concrete ORT type, not `NoiseReduction` or the compute APIs.
 
 ### License
 
-The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
-Check model weights and ONNX files separately for use and redistribution rights. The DeepFilterNet source being dual-licensed does not mean every model from every source has the same license. The Rust `ort` crate, ONNX Runtime, and execution-provider libraries also have their own license and distribution requirements.
-
-ONNX messages are decoded with unmodified `onnx-protobuf` 0.2.3 (MPL-2.0), using `protobuf` 3.4.0 (MIT). Source availability and distribution requirements are documented in the [CLI third-party notices](../anr-cli/THIRD-PARTY-NOTICES.md).
-
+MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model weights, ONNX Runtime, and provider dependencies have separate terms. ONNX parsing uses unmodified `onnx-protobuf` 0.2.3 (MPL-2.0) and `protobuf` 3.4.0 (MIT); see the [third-party notices](../anr-cli/THIRD-PARTY-NOTICES.md) for source and distribution requirements.
 
 ## 简体中文
 
-`anr-ort` 用 ONNX Runtime 运行 DeepFilterNet3（DFN3）模型，处理 **48 kHz、单声道的 `f32` 音频采样**。它提供 `DFN3`，供程序加载模型并逐段处理音频。
+`anr-ort` 使用 ONNX Runtime 执行有状态的 DeepFilterNet3（DFN3）推理：**48 kHz、单声道 `f32` 音频**，每帧 480 个采样。本包负责 ORT Session 封装和模型准备，不解码音频、不重采样，也不下载模型。[`anr` facade](../anr/README.md) 另提供模型查找和独立原生后端。需要最新 Rust stable 工具链。
 
-它不读取麦克风、不解码音频文件，也不转换采样率。需要 **最新 Rust stable 工具链**。模型由你准备，不随 Rust 包提供，也不会自动下载。
-
-本包专门提供 ORT 实现。若要不依赖 ONNX Runtime 的 OpenGL、GLES、Vulkan、wgpu 或原生 D3D12，请选择 [`anr` 的 Compute feature](../anr/README.md#不使用-ort-的-compute-后端)。它们使用不带 ORT 环境的 `DFN3::from_file(path)`，并要求固定模型摘要，不是 ORT execution provider。
-
-### 先完成一次降噪
+### CPU 入门
 
 ```toml
 [dependencies]
 anr-core = "0.1.1"
 anr-ort = "0.1.1"
 ```
-
-依赖示例使用 `0.1.1`。使用本地源码时，可以把版本依赖改成指向对应 crate 目录的 `path` 依赖。
 
 ```rust,no_run
 use anr_core::{NoiseReduction, Result};
@@ -146,50 +168,70 @@ use anr_ort::DFN3;
 fn main() -> Result<()> {
     anr_ort::initialize_runtime()?;
     let environment = anr_ort::ort::init().build().map_err(anr_core::Error::backend)?;
-    let mut denoiser = DFN3::from_file(&environment, "models/dfn3.onnx")?;
-    denoiser.set_factor(80.0);
-
+    let mut reducer = DFN3::from_file(&environment, "models/dfn3.onnx")?;
+    reducer.set_factor(80.0);
     let input = [0.0_f32; DFN3::FRAME_SIZE];
     let mut output = [0.0_f32; DFN3::FRAME_SIZE];
-    denoiser.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
-    denoiser.reset();
+    reducer.run(DFN3::SAMPLE_RATE, &input, &mut output)?;
+    reducer.reset();
     Ok(())
 }
 ```
 
-示例输入是静音，使用时换成自己的音频采样。模型路径相对于程序的工作目录。`run`、`set_factor` 和 `reset` 来自 `anr_core::NoiseReduction`，需要像示例一样先用 `use` 引入。
+模型路径相对于应用的工作目录。`run`、`factor`、`set_factor` 和 `reset` 来自 `anr_core::NoiseReduction`，需引入 trait。示例处理一帧静音。
 
-### 每路连续音频各用一个降噪器
+### 运行库与 Cargo features
 
-模型处理后面的音频时会用到前面的信息，所以每路音频各用一个 `DFN3` 降噪器。换录音或重新从头播放前调用 `reset()`；它会清除音频状态，保留降噪强度。
+`anr_ort::ort` 重导出本包使用的运行库 API。`Cargo.lock` 固定 `ort`、`ort-sys` 为 `2.0.0-rc.15`；工作区启用 `std`、`api-27`，不启用 `ndarray`。两条构建路径使用不同版本：
 
-每次尽量传入 480 的整数倍。模型一次处理 480 个采样，也就是 10 ms 音频。末尾不足 480 个采样时会补零，按完整的一帧处理，再只返回原有长度的结果。补上的零也会影响后续处理，所以拆成许多短段，结果可能与整段处理不同。实时收到的零散采样，应先积攒到 480 的整数倍。
+- 此版 `ort-sys` 下载器使用 ONNX Runtime **1.31.0** 分发包。
+- 应用发布配置 `.github/onnxruntime.json` 固定 Microsoft ONNX Runtime **1.28.0**，不是 Cargo 下载器的版本。
 
-库不会消除模型带来的时间延迟，也没有在录音结束后额外取出剩余结果的操作。
+自备库必须提供 API 27 以及所需算子/provider；版本号本身不能保证自定义或 minimal 构建兼容。
 
-### 调用前先检查输入和输出
+| Feature | 作用 |
+| --- | --- |
+| `download-binaries`（默认） | 上游运行库下载、共享库复制和 native TLS；目标平台须有可用分发包。 |
+| `load-dynamic` | 在运行时加载应用提供的共享库。 |
+| `cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` | 编入对应 ORT provider 支持，不自动选设备或安装厂商运行库/驱动。 |
 
-- 输入至少有一个采样。
-- 采样率必须是 48,000 Hz。
-- 输出数组由你分配，长度必须与输入相同。
+使用自备运行库：
 
-这三项检查失败时，输出和处理状态都不会改变。如果运行模型时才出错，输出和状态可能已经部分更新，不会撤销已经完成的处理。推理失败后再次使用前应调用 `reset()`；运行库或 session 已无法执行时，应重新创建实例。
+```toml
+anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
+```
 
-### 调整降噪强度
+将 `ORT_DYLIB_PATH` 设为共享库**文件**，在 `ort::init().build()` 前调用 `initialize_runtime()`。未设置或为空时使用平台默认库名：`onnxruntime.dll`、`libonnxruntime.so` 或 `libonnxruntime.dylib`。该函数正常返回加载错误，失败后可重试，已加载的库会复用；链接构建中不执行操作。它不创建 `Environment`，环境由应用配置、创建并持有，供 Session 使用。
 
-`set_factor` 接受 `0..=100`，按 `round(factor / 100 * 60)` 换算成分贝（dB）。也可以用 `set_atten_lim_db` 直接设置 `0..=60` dB，用 `get_atten_lim_db` 读取。
+Cargo features 在依赖图中取并集：单个依赖关闭 defaults，不能撤销其他依赖启用的 `download-binaries`。facade 使用 `ort-` 前缀；其 `ort-load-dynamic` 和 provider features 还会启用 `ort` 后端。
 
-超出范围的值会被限制到最近的上限或下限；`NaN` 不改变当前设置，正无穷按上限处理，负无穷按下限处理。
+### Environment 与 Session 配置
 
-`set_factor` 换算出的分贝值会取整，`set_atten_lim_db` 则保留小数。`factor()` 根据实际分贝设置换算并取整，读回的值可能与传入值略有不同。这些数值限制的是模型压低声音的幅度，不是原音与降噪后音频的混合比例。
+`DFN3::from_file(&environment, path)` 是 CPU 便捷构造器：显式选择内置 CPU provider，关闭环境 provider 列表和自动加速器选择，使用独立线程池、一个 intra-op 线程，禁用 intra/inter-op 忙等待；minimal 运行库不需要设备发现 API。
 
-`set_factor(0.0)` 仍然运行 ONNX 图，所提供 DFN3 模型的零衰减分支不表示原音旁路。若需要原样返回输入，应由应用跳过降噪器。上述分贝 setter/getter 仅属于本 ORT 类型，不是通用 trait 或 Compute 前端的方法。
+需要其他配置时，先配置 `SessionBuilder`，通过 `session_from_file(builder, path, &providers)` 创建 Session，再交给 `DFN3::new(session)`。上方英文示例给出了完整 CUDA 配置，需要启用 `cuda` 并准备相应运行库。DirectML 还需 `with_memory_pattern(false)`，并关闭并行执行。加载器保留 builder 的其他设置，只注册指定 provider，并在需要时补充外部权重目录。
 
-### 模型必须有这六个输入和输出
+显式 provider 注册失败会报错，不会静默改用另一 provider。正常的按算子 CPU 分配仍然允许：GPU provider 不支持或更适合 CPU 的算子可在 CPU 上运行。`DFN3::new` 保留 Session 的分配策略。
 
-`DFN3::from_file(&environment, path)` 使用应用持有的 `Environment` 加载模型；`DFN3::new(session)` 使用已经建好的 ONNX Runtime session。两种方式都只接受下表的三个输入和三个输出，类型必须为 `f32`，输入排列不限。`[]` 表示单个数，`[1]` 表示只有一个数的一维数组。
+音频和状态张量始终位于 CPU 内存，由 ORT 处理 GPU 传输。构造时分配缓冲区，以两份状态缓冲交替读写，避免逐帧复制整份状态。这是同步 API，不保证音频回调安全。
 
-| 方向 | 名称 | 运行时的大小 |
+### 内存中的模型准备
+
+`session_from_file` 会在创建 CUDA、TensorRT、DirectML Session 前准备模型；同时请求多个时，目标优先级为 TensorRT、DirectML、CUDA。其他 provider 沿用上游文件加载。
+
+CUDA 展开 `FusedConv(Sigmoid)`，保留其支持的 ReLU 卷积和矩阵融合。TensorRT/DirectML 另展开 `FusedConv(Relu)` 和符合条件的无转置 `FusedMatMul`，保留 `alpha`；带缩放矩阵乘法的展开要求 opset 至少为 13。
+
+三个目标都会转换常量索引的状态序列，以及已证明可安全提前执行的固定形状张量分支。仅用于全零判断的 `float32` `NonZero` 改为固定形状归约；消除已证明恒定的布尔选择及无状态死计算，保留未知或有状态计算的执行依赖。运行时条件和衰减量仍动态生效，无法证明适用的模式保持原样。
+
+每个 Session 只准备一次，不改写源文件或权重，不生成派生 ONNX 文件或磁盘缓存。外部权重默认相对于源模型目录解析；builder 已配置 `session.model_external_initializers_file_folder_path` 时不会覆盖。此准备路径要求模型目录为有效 UTF-8。
+
+已有模型字节时可调用 `prepare_model(&[u8], ModelTarget) -> anr_core::Result<Cow<'_, [u8]>>`，再通过 builder 的 `commit_from_memory(prepared.as_ref())` 加载。`ModelTarget` 包括 `Cuda`、`TensorRT`、`DirectML`；未改变时借用输入字节，改变时返回拥有的缓冲区。该 API 不注册 provider 或配置 Session，外部权重目录也须由调用方设置。直接调用上游 `commit_from_file` 会绕过准备；`DFN3::new` 无法修改已加载的图。
+
+### 模型端口契约
+
+`DFN3::new(session)` 要求恰好三个输入、三个输出，全部为 `f32`，按名称而非顺序匹配。`[]` 为标量，`[1]` 为单元素向量。
+
+| 方向 | 名称 | 运行时形状 |
 | --- | --- | --- |
 | 输入 | `input_frame` | `[480]` |
 | 输入 | `states` | `[45304]` |
@@ -198,43 +240,21 @@ fn main() -> Result<()> {
 | 输出 | `new_states` | `[45304]` |
 | 输出 | `lsnr` | `[]` 或 `[1]` |
 
-模型可以给一维数组的长度取名，而不写固定数值。加载时会检查维数和已经写明的长度；符号长度不能改变运行时需要的 480 个采样和 45,304 个状态值。对应常量是 `DFN3::SAMPLE_RATE = 48000`、`FRAME_SIZE = 480`、`STATE_SIZE = 45304`。
+声明允许一维符号长度，运行时仍须满足上述音频/状态长度。常量为 `DFN3::SAMPLE_RATE = 48000`、`FRAME_SIZE = 480`、`STATE_SIZE = 45304`。ORT 根据预分配缓冲区检查实际音频/状态输出；`lsnr` 仅检查声明，不请求或返回其值。
 
-音频和状态输出会写入事先分配的空间，ONNX Runtime 会检查实际长度。`lsnr` 只检查模型声明的类型和大小，不读取或返回计算结果。如果模型有额外输入输出、数组维数不同，或状态值的含义和顺序不同，就需要修改实现，不能直接使用。检查通过也不能证明模型本身正确，或降噪效果符合你的需要。
+本包不像原生 Compute 那样限定一个文件摘要，但模型必须采用预期的状态顺序和衰减语义，端口形状相同不足以保证兼容。上游多文件 DeepFilterNet 导出不符合此单帧接口。
 
-与 Compute 后端不同，`anr-ort` 不将文件限定为一个 SHA-256 摘要；它检查上述端口类型和形状，但模型仍须采用预期的状态布局与衰减语义。端口形状相同不能单独证明语义兼容。
+### 流、错误与强度
 
-### 默认下载 CPU 运行库，也可以使用自己的运行库
+- 每路连续音频/声道使用独立实例；`reset()` 清除状态，保留强度。
+- `run` 接受任意非零长度的 48,000 Hz 输入，输出必须等长。尾帧补零至 480 采样，状态推进完整一帧，只返回请求长度；连续调用尽量使用 480 的整数倍。
+- 不补偿模型延迟，不提供流结束 flush。解码、声道拆分和重采样由应用负责。
+- 空输入、错误采样率和长度不等的校验错误不会改变输出/状态。推理错误可能发生在已有输出写入、状态推进之后；再次使用前 reset，运行库/Session 无法恢复时重新创建。错误类型见 [`anr-core`](../anr-core/README.md)。
 
-本包通过 `anr_ort::ort` 提供所用版本的运行库类型，固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也支持兼容 API 27 的自备库，例如 1.28.0。
+初始衰减为 **3 dB**（`factor() == 5`）。`set_factor` 将值限制到 `0..=100`，再按 `round(factor / 100 * 60)` 设置整分贝；`factor()` 从实际分贝换算回百分比并取整，读回值可能不同。`set_atten_lim_db` / `get_atten_lim_db` 直接访问 `0..=60` dB，保留小数。两种 setter 都忽略 NaN，正负无穷分别饱和到上限和下限。
 
-默认启用 `download-binaries`，在构建时下载并复制 CPU 使用的 ONNX Runtime，需要网络和目标平台支持。如果已经准备好运行库，可以关闭默认功能，改用 `load-dynamic`：
-
-```toml
-anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynamic"] }
-```
-
-创建环境前调用 `anr_ort::initialize_runtime()`，通过可返回错误的入口加载 `ORT_DYLIB_PATH`。变量应指向兼容 API 27 的共享库文件，不是目录；未设置或为空时使用平台默认库名。加载失败后可以重试，已加载的库会复用。这个函数不创建环境或替换宿主设置；应用自行创建并持有一个 `Environment`，供模型共享。关闭 defaults 后不再引入下载器及 TLS/OpenSSL 构建依赖。
-
-#### 启用设备支持，不会自动改用 GPU
-
-`cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` 编入对应库的支持，不会自动选择设备，也不会安装驱动或其他必需的库。
-
-`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，先配置 `SessionBuilder`，调用 `anr_ort::session_from_file(builder, path, &providers)`，再将返回的 Session 传给 `DFN3::new(session)`。
-
-GPU Session 默认保留 ORT 按算子分配到 CPU 的行为，不支持或更适合 CPU 的算子可以与所选 GPU provider 混合执行。`DFN3::new(session)` 保留 Session 设置，不要求全部算子都在 GPU 上运行。CLI 和 benchmark 使用这一默认策略，但显式 provider 注册失败仍报错。
-
-`session_from_file` 注册传入的 provider，注册失败即报错，其余 builder 设置保持不变。CUDA/TensorRT 创建 Session 前会读取模型，在内存中做等价转换：展开 sigmoid `FusedConv`；TensorRT 另将常量索引的状态序列拆分改为 `Split`，将符合条件的固定形状、纯张量分支改为 `Where`。条件和衰减量仍可动态变化。不能证明提前执行安全的模式保持原样，provider 仍可能不支持它们。
-
-每次创建新 Session 时准备一次模型，不在每帧推理中转换；不改写原模型或权重，不生成派生 ONNX 文件或磁盘缓存。CPU、DirectML 及其他 provider 保留原始文件加载。外部权重的相对路径默认以源模型目录解析，但不会覆盖 builder 明确配置的目录。已有模型字节时，可调用 `prepare_model(bytes, ModelTarget::Cuda)` 或 `ModelTarget::TensorRT`，再用已配置的 builder 调用 `commit_from_memory`。`prepare_model` 不选择 provider；直接调用上游 `commit_from_file` 会绕过转换，`DFN3::new` 也不能补救已创建的 Session。
-
-
-facade 的 `ort-directml` 编入 ORT DirectML provider 支持，`dx` 提供另一套原生 D3D12 实现。`gl`、`gles`、`vk`、`wgpu` 同样属于 facade，不是 `anr-ort` 的 features。文件解码、重采样、按声道处理及明确的后端/provider 选择，见 [`anr-cli`](../anr-cli/README.md)。
+强度是衰减上限，不是输出增益或干湿混合比例。零仍执行模型，不表示原音旁路。分贝方法仅属于 ORT 具体类型，不属于 `NoiseReduction` 或 Compute API。
 
 ### 许可
 
-代码采用 **MIT OR Apache-2.0**，使用时任选其一。完整文本见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。
-
-模型权重和 ONNX 文件需要单独确认使用与分发权限。DeepFilterNet 源码采用双许可，不代表任何来源的模型都具有相同许可。Rust `ort` 包、ONNX Runtime 及执行 provider 所依赖的库，也各有自己的许可和分发要求。
-
-ONNX 消息使用未修改的 `onnx-protobuf` 0.2.3（MPL-2.0）解析，运行库为 `protobuf` 3.4.0（MIT）。源码获取和分发要求见 [CLI 第三方说明](../anr-cli/THIRD-PARTY-NOTICES.md)。
+MIT OR Apache-2.0，任选其一：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。模型权重、ONNX Runtime 和 provider 依赖另有许可条件。ONNX 解析使用未修改的 `onnx-protobuf` 0.2.3（MPL-2.0）和 `protobuf` 3.4.0（MIT）；源码和分发要求见[第三方说明](../anr-cli/THIRD-PARTY-NOTICES.md)。

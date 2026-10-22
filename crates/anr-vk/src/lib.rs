@@ -42,8 +42,8 @@ use std::path::Path;
 ///
 /// `run` waits for GPU completion and readback. A partial 480-sample frame is
 /// zero-padded and advances a whole frame. No latency compensation/end flush
-/// is added. Validation failures leave output/state untouched. Reset before
-/// reuse after an execution error; device loss requires recreating the stream.
+/// is added. Validation failures leave output/state untouched. Execution errors
+/// require recreating the stream; `reset()` cannot recover a failed executor.
 /// The Vulkan loader and a hardware Vulkan 1.1 compute device are required.
 /// CPU devices and implicit backend fallbacks are never used.
 pub struct DFN3 {

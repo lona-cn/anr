@@ -4,40 +4,30 @@
 
 ## English
 
-`anr-cli` installs the `anr` command for denoising audio files, serial batches, and stdin/stdout audio. It calls DFN3 through `anr`: ONNX Runtime by default, or independent OpenGL, OpenGL ES, Vulkan, wgpu, Direct3D 12 Compute, CUDA, TensorRT, OpenVINO, and OpenCL backends without ORT. The CLI handles decoding, band-limited resampling, and multiple channels. Runtime use requires neither FFmpeg nor Python.
+`anr-cli` provides the `anr` command for DFN3 audio denoising: individual files, serial batches, and stdin/stdout streams. It handles decoding, band-limited resampling, and independent channel state. ONNX Runtime (ORT) is the default backend; nine native backends are opt-in. Audio processing needs neither FFmpeg nor Python. This is a file/pipe tool, not an audio-device driver or virtual microphone.
 
-Source builds require the **latest stable Rust toolchain**. Default features download and prepare the pinned DFN3 model at build time, including with `cargo install`; application ZIPs bundle that model and CPU runtime. `--model` is optional: an explicit path wins, otherwise the CLI checks `models/dfn3.onnx` beside the executable and then the model source recorded at build time. No checkout-relative path is assumed. The ORT backend requires exactly these three inputs and three outputs, all `f32`:
+### Installation
 
-| Direction | Name | Runtime shape |
-| --- | --- | --- |
-| Input | `input_frame` | `[480]` |
-| Input | `states` | `[45304]` |
-| Input | `atten_lim_db` | `[]` or `[1]` |
-| Output | `enhanced_audio_frame` | `[480]` |
-| Output | `new_states` | `[45304]` |
-| Output | `lsnr` | `[]` or `[1]` |
+#### Application ZIP
 
-A one-dimensional tensor may declare a symbolic length, but runtime lengths still have to match. These are ORT port checks, not the compute backends' compatibility test: compute requires the exact SHA-256 listed below. Check model rights, sound quality, and algorithmic latency separately.
+The [release workflow](../../.github/workflows/ci.yml) packages Windows x64, Linux x64, macOS arm64, and macOS x64 applications as `anr-<version-or-commit>-<target>.zip`. Each package contains the executable, CPU ONNX Runtime **1.28.0**, `models/dfn3.onnx`, and licenses/notices. The separate [model release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains model assets, not the CLI.
 
-### Install and try it
-
-#### Use an application ZIP
-
-The release workflow produces `anr-<version-or-commit>-<target>.zip` for Windows x64, Linux x64, macOS Apple Silicon, and macOS Intel after its platform checks pass. Each ZIP contains the executable, CPU ONNX Runtime **1.28.0**, `models/dfn3.onnx`, and applicable licenses. Processing audio needs no Rust, Python, or FFmpeg. The [model release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) is a separate asset, not a CLI installation.
-
-Extract everything, enter the extracted directory, and run:
+When using a packaged build, verify its attached `SHA256SUMS`, extract the entire archive, and run:
 
 ```sh
 ./anr denoise input.wav --output clean.wav
 ```
 
-On Windows use `.\anr.exe`. The bundled model is found automatically, regardless of the working directory. Keep the native shared libraries beside the executable. No `ORT_DYLIB_PATH` setting is needed for the bundled runtime; remove an old override if you want to use the bundled copy.
+On Windows, use `.\anr.exe`. Keep the runtime libraries and `models/` beside the executable; discovery does not depend on the working directory. An existing `ORT_DYLIB_PATH` overrides the bundled runtime, so unset it to use the package's copy.
 
-Windows may need the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The Linux package targets glibc and is built on Ubuntu 24.04, not musl or arbitrary older glibc. macOS packages are ad-hoc signed, not notarized; follow the system's approval prompts for downloaded applications. GPU providers are not bundled. Check attached `SHA256SUMS` before use.
+- Windows may require the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+- Linux packages are glibc builds produced on Ubuntu 24.04, not musl builds or a promise of compatibility with older glibc.
+- macOS packages use ad-hoc signing, not notarization; follow the system's approval procedure for downloaded applications.
+- These packages contain CPU ORT, not GPU providers or native vendor SDKs. Packaging configuration is not a record of platform test results; see [RELEASING.md](../../RELEASING.md) for the release procedure.
 
-#### Build from source
+#### Source installation
 
-Install from the source workspace root. The default build uses ORT's prebuilt libraries where available. **On Intel macOS, use the instructions below for supplying your own runtime instead.**
+Use the latest stable Rust toolchain. From a source checkout's workspace root:
 
 ```text
 cargo install --path crates/anr-cli --locked
@@ -45,17 +35,9 @@ anr --help
 anr backends --json
 ```
 
-The executable is `anr`, not `anr-cli`. Add the installation directory to `PATH`, or run the executable by its full path. To install version `0.1.1` from crates.io, use `cargo install anr-cli --version 0.1.1 --locked`.
+The executable is named `anr`, not `anr-cli`; put Cargo's installation directory on `PATH`. Source builds need the platform linker/toolchain: MSVC C++ tools and Windows SDK on Windows, C/C++ linking tools plus `pkg-config` and OpenSSL development files (such as `libssl-dev`) on Linux, or Xcode Command Line Tools on macOS. Default features download a prebuilt CPU ORT runtime and prepare the model, so a first build normally needs network access.
 
-The default features are `ort-download-binaries`, `download-models`, and `copy-models`: they enable the ORT backend, download the prebuilt CPU runtime and pinned model, and copy the model beside build outputs. The first build requires network access, a target toolchain, and platform support:
-
-- Windows: the MSVC C++ toolchain and Windows SDK.
-- Linux: C/C++ linking tools, `pkg-config`, and OpenSSL development files, such as Ubuntu's `libssl-dev`.
-- macOS: Xcode Command Line Tools.
-
-The prebuilt distribution for `ort 2.0.0-rc.15` uses ONNX Runtime 1.31.0 and does not include Intel macOS. On that platform, build ONNX Runtime yourself or supply an API-27-compatible shared library, including 1.28.0. Installing the Rust target alone is not enough.
-
-For example, once you have a compatible CPU `libonnxruntime.dylib` on Intel macOS, set its actual absolute path in the environment used to run `anr`, then install the dynamic-loading build:
+**Intel macOS needs a supplied or source-built ORT runtime**, rather than assuming a prebuilt runtime is available. For example, after obtaining an API-27-compatible CPU shared library (including ONNX Runtime 1.28.0):
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
@@ -63,87 +45,103 @@ cargo install --path crates/anr-cli --locked --no-default-features --features or
 anr backends --json
 ```
 
-Replace that path with a real file and keep the setting for later runs. `backends` lists compiled support; only `denoise` loads and uses the runtime. See the [ONNX Runtime CPU build instructions](https://onnxruntime.ai/docs/build/inferencing.html) to build it yourself. CI pins [Microsoft's v1.28.0](https://github.com/microsoft/onnxruntime/releases/tag/v1.28.0) and does not assume that release provides Intel macOS binaries. CMake and Python are build tools in that case, not audio-processing dependencies of the installed CLI.
+Use the actual library **file**, and retain the setting when running `anr`. Building ORT itself requires its own tools; see the [upstream build instructions](https://onnxruntime.ai/docs/build/inferencing.html). Python/CMake used for that build are not installed-CLI audio dependencies.
 
-Denoise a file, process a batch, or inspect a recording:
+### Commands and model selection
 
 ```text
 anr denoise voice.wav --output clean.wav
 anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav
 anr inspect voice.wav --json
+anr backends --json
+anr denoise --help
 ```
 
-Use `--model /path/to/dfn3.onnx` to select a different model you're allowed to use. Quoted Windows paths work too. Explicit relative paths are resolved from the command's working directory; automatic model discovery is relative to the executable, then the build-time source. `inspect` does not load a model. `backends` reports what was compiled in; it does not prove a runtime or GPU is ready to use.
+`inspect` probes the selected audio track without loading a model or decoding the entire recording. JSON fields are `format`, `codec`, `track_id`, `sample_rate`, `channels`, `frames`, and `duration_seconds`; unknown counts/durations are `null`, and known duration is header-derived. It accepts encoded input, not a raw-input specification.
 
-`download-models` caches the verified model under `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/` (`~/.cargo` by default). `copy-models` independently copies it to `models/dfn3.onnx` in the Cargo profile, examples, and tests directories. Set `ANR_MODEL_PATH` to an absolute local file path **before building** to skip model downloading, or to use `copy-models` alone. A download-only build and `cargo install` can use the persistent source path without a bundled copy. For distribution to another machine, include the model and its applicable licenses/notices; the original build cache is not portable. No model is downloaded at runtime.
+`backends` lists all ten backend names and their compiled status. ORT additionally lists `cpu`, `cuda`, `tensorrt`, `directml`, `coreml`, and `xnnpack`. Every `runtime_available` field is `null`: the command does not load runtimes, create devices, or test inference.
 
-Disable default features to omit automatic model preparation and its downloader dependencies. Then pass `--model`, provide a bundled model, or opt back into the individual model features. A cold cache with `CARGO_NET_OFFLINE=true` fails rather than downloading; use `ANR_MODEL_PATH` for offline builds. See the [model preparation guide](../anr/README.md#model-download-and-copying).
+`--model PATH` is optional. An explicit path wins and never falls back on failure; relative paths resolve from the working directory. Otherwise, the CLI uses `models/dfn3.onnx` beside the executable, then the model source recorded at build time. A bad bundled file is an error, not a reason to try a different model. No model is downloaded at runtime.
 
-### Arguments and batches
+Default features are `ort-download-binaries`, `download-models`, and `copy-models`:
+
+- `download-models` downloads and verifies the pinned model in `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/` (`~/.cargo` by default).
+- `copy-models` copies the prepared model into `models/dfn3.onnx` in Cargo's profile, examples, and test-output directories.
+- Set `ANR_MODEL_PATH` to a local model **before building** to bypass downloading; `copy-models` alone requires this setting. Use an absolute path for reproducible builds. A cold cache with `CARGO_NET_OFFLINE=true` fails instead of downloading.
+- `cargo install` can use the persistent build-time model source. For relocation to another machine, ship the model beside the executable with its licenses/notices; the build machine's cache is not portable.
+
+Disabling default features removes automatic model preparation as well as default ORT support. See the [library reference](../anr/README.md) for model preparation and the [ORT reference](../anr-ort/README.md) for the accepted model port contract. Native backends require this exact original model SHA-256:
 
 ```text
-anr denoise INPUT... --output PATH [--model MODEL] [OPTIONS]
-anr denoise INPUT... --output-dir DIR [--model MODEL] [OPTIONS]
-anr inspect INPUT [--json]
-anr backends [--json]
+fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9
 ```
 
-| Argument | Meaning |
+Matching tensor shapes alone does not make another export compatible with native backends.
+
+### Denoise arguments
+
+```text
+anr denoise INPUT... --output PATH [OPTIONS]
+anr denoise INPUT... --output-dir DIR [OPTIONS]
+```
+
+| Argument | Contract and default |
 | --- | --- |
-| `INPUT...` | Explicit file paths. For a single input, `-` means stdin. The program does not scan directories recursively or expand globs itself. |
-| `--output PATH` | Destination for one input; `-` means stdout. Cannot be combined with `--output-dir`. |
-| `--output-dir DIR` | Processes files serially, using each input's stem with `.wav`, or `.f32le` when raw output is selected. Does not rename colliding outputs. |
-| `--model PATH` | Optional model override. Otherwise uses the bundled or build-time model; an explicit invalid path is an error, not a fallback. |
-| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | Defaults to `ort`. Each native backend requires its matching opt-in Cargo feature and the exact supported model below. |
-| `--provider cpu` | ORT only; omitted means `cpu` for ORT. Other providers require matching features and runtime support. Any explicit `--provider` with a non-ORT backend is an argument error. |
-| `--openvino-device CPU\|GPU\|GPU.n\|NPU` | OpenVINO only; omitted means explicit `CPU`. `GPU.n` selects a GPU index, such as `GPU.0`. GPU/NPU failures do not fall back to CPU. Invalid use with another backend is an argument error. |
-| `--strength 80` | Defaults to 80. Accepts finite values in `0..=100`; rejects NaN, infinity, and out-of-range values rather than clamping them. |
-| `--input-format auto\|f32le` | Defaults to detecting audio with headers. Raw input requires explicit `f32le`. |
-| `--input-rate HZ` / `--input-channels N` | Required positive values for raw input. Cannot override the specifications in an audio header. |
-| `--output-format wav\|f32le` | Inferred from `.wav` / `.f32le` for files; other extensions need an explicit format. Stdout requires explicit `f32le`. |
-| `--output-rate HZ` | Optional positive sample rate. Defaults to the input rate. |
-| `--wav-format pcm16\|pcm24\|float32` | Defaults to PCM16. Cannot be explicitly set for raw output. |
-| `--overwrite` | Allows replacing an existing output after processing finishes. Never permits replacing an input, model, or a result already completed in this batch. |
-| `--quiet` / `--verbose` | Mutually exclusive global options for stderr diagnostics. Do not change audio stdout. |
+| `INPUT...` | One or more explicit file paths. `-` means stdin and requires a single input with `--output`. No directory traversal or program-side glob expansion. |
+| `-o, --output PATH` | One input's destination; `-` means stdout. Mutually exclusive with `--output-dir`. |
+| `--output-dir DIR` | Creates the directory if needed; serially writes `stem.wav`, or `stem.f32le` for explicit raw output. Colliding stems are errors, not automatically renamed. |
+| `--model PATH` | Optional override; discovery order is described above. `--model -` names a real file, not stdin. |
+| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | Default `ort`, even in a native-only build. Select a compiled backend explicitly. |
+| `--provider cpu\|cuda\|tensorrt\|directml\|coreml\|xnnpack` | ORT only; omitted means `cpu`. Any explicit provider with a native backend is an argument error. |
+| `--openvino-device DEVICE` | OpenVINO only: `CPU` (default), `GPU`, `GPU.n` such as `GPU.0`, or `NPU`. No AUTO/HETERO or CPU fallback from a requested GPU/NPU. |
+| `--strength VALUE` | Default `80`; finite `0..=100`, without clamping invalid arguments. Zero selects DFN3's attenuation branch, not a raw-audio bypass. |
+| `--input-format auto\|f32le` | Default `auto`: probe encoded audio. Raw PCM requires explicit `f32le`. |
+| `--input-rate HZ` / `--input-channels N` | Required positive values for raw input (`u32` rate, `u16` channels). Invalid for `auto`; cannot override an audio header. |
+| `--output-format wav\|f32le` | File extensions `.wav` / `.f32le` infer format, case-insensitively; other extensions need this option. Directory output defaults to WAV. Stdout requires explicit `f32le`. |
+| `--output-rate HZ` | Positive `u32`; defaults to the input rate. |
+| `--wav-format pcm16\|pcm24\|float32` | Default `pcm16`. Explicit use with raw output is an error. |
+| `--overwrite` | Replaces an existing destination only after successful processing. Never permits replacing an input, the selected model, or a result already saved in this batch. |
+| `-q, --quiet` / `-v, --verbose` | Mutually exclusive global options. Quiet keeps errors; verbose adds processing specifications. Diagnostics and completion statistics go to stderr. |
+| `-h, --help` / `-V, --version` | Display help / top-level version and exit. |
 
-Before writing output, batch processing checks global arguments, the model/backend (and ORT provider when applicable), and resolvable destination conflicts. Actual file identities are checked again before processing and before committing, including case-insensitive aliases. If a previously nonexistent alias is discovered after an earlier batch result was saved, the later file fails instead of replacing that result. Each channel has an independent reducer, reused with state reset between files. Failed files remove their temporary output and processing continues; the final exit code is 1 and successful files remain. If a saved file's identity cannot be verified, the CLI reports that it was saved and stops further processing. There is no whole-batch rollback.
+Global argument and destination checks, runtime/provider setup, and the first model instance are completed before output creation. The output directory is checked again after creation. Input/model paths and file identities protect against aliases, symlinks, hard links, and case-insensitive collisions; checks repeat before each file and before commit. A later destination that aliases an earlier completed result fails rather than replacing it.
 
-Each file is first written to a temporary file in the destination directory. It is moved to the final path only after inference, encoding, and WAV finalization finish. Existing files are not overwritten by default; even with `--overwrite`, the old file is not truncated before processing. This does not guarantee durability through power loss. Bytes already written to stdout cannot be taken back. Check the exit code and stderr before treating a stream as complete.
+Each channel has its own engine. Engines are reused where possible and reset between files. Decode, inference, or output failure for one file removes its temporary output, reports the error, and continues with the remaining files. Global initialization errors, failures to initialize additional channel engines, cancellation, and broken pipes stop the batch. Successful files remain; there is no batch rollback. If a saved file's identity cannot be verified, the CLI reports that it was saved and stops.
 
-### Audio formats and duration
+File output uses a temporary file in the destination directory. Only after inference, encoding, and WAV finalization succeed is it committed to the final path; the default commit does not clobber a destination created concurrently. `--overwrite` does not truncate the old file in advance. This is not a power-loss durability guarantee. `--output-dir` creates parents; with `--output`, the parent directory must already exist.
 
-Input decoding and container detection use Symphonia 0.5.5 with its `all` features, including WAV/PCM, FLAC, MP3, Ogg/Vorbis, and AAC-LC/M4A support. **Recognizing a container does not mean every codec or profile inside it is supported.** Opus, for example, is not in the current codec set. Individual files still have to decode successfully; this list is not a claim that every encoding variant or platform has been tested.
+### Formats, duration, and latency
 
-For files with multiple tracks, the first decodable audio track is selected. `inspect` reports the selected track, sample rate, channels, and other details. Its JSON fields are `format`, `codec`, `track_id`, `sample_rate`, `channels`, `frames`, and `duration_seconds`; unknown frame counts or durations are `null`. Changes in sample rate or channel count during processing are rejected. Encoded, non-seekable stdin is also subject to demuxer limitations: inputs that need seeking may fail. The CLI does not work around this by buffering the whole input or silently writing it to disk.
+Symphonia 0.5.5 with `all` features handles container probing and decoding, including WAV/PCM, FLAC, MP3, Ogg/Vorbis, and AAC-LC/M4A. Codec/profile support still matters: recognizing a container does not imply support for every track inside it; Opus is not in the current codec set. The first track with a supported decoder is selected. Changes of track, sample rate, or channel layout during processing are rejected.
 
-Fixed-width WAV audio with a reliable declared frame count is checked against the frames actually decoded. Premature EOF is an error and cannot commit a short replacement. Unknown-length WAV markers remain streamable; estimated durations from compressed formats are not treated as exact integrity budgets. This is not a guarantee that every damaged container or codec can be detected.
+Encoded stdin is non-seekable: a container that requires seeking may fail. The CLI neither buffers the whole stream nor silently spools it to disk. Reliable declared frame counts in fixed-width WAV are checked for premature EOF; unknown-length WAV markers remain streamable. Compressed-format duration estimates are not exact integrity budgets, and `inspect` is not a full-file integrity check.
 
-Output is PCM16, PCM24, or float32 WAV, or raw f32le. There is no MP3/AAC encoder. WAV output contains the necessary audio headers and samples; it does not promise to preserve cover art, tags, chapters, or special channel-layout markers. Integer WAV samples are clamped to their representable range. Non-finite samples are errors.
+Output is WAV (PCM16, PCM24, or float32) or raw f32le; there are no MP3/AAC encoders. WAV retains samples and necessary headers, not source tags, artwork, chapters, or special channel-layout metadata. Integer samples are rounded and clamped; non-finite input/output samples are errors. WAV output is limited by RIFF's 32-bit length fields, not RF64.
 
-Each channel has independent model state. Channel count and order are preserved; channels are not mixed automatically. Processing uses bounded buffers rather than loading the whole recording. Samples are collected across decoded packets into full model frames; only the final frame is padded at EOF. Audio is resampled to the model's 48 kHz and then to the output rate when needed; equal rates skip resampling. By default, the output frame count equals the number of frames actually decoded. With an explicit rate change, it is `round(input_frames × output_rate / input_rate)`. Here, a frame means one sample per channel at the same point in time.
+The pipeline preserves channel count/order without mixing. It uses bounded streaming buffers, resamples to DFN3's **48 kHz / 480-sample** frames, and resamples to the requested output rate. Equal-rate stages bypass resampling. Samples accumulate across decoder packets; only the last model frame is zero-padded at EOF, and padding is trimmed.
 
-Resampler filter delay is compensated and padding is trimmed. **DFN3's own algorithmic latency is not guessed or compensated**, and the backend has no end-of-stream flush operation. Equal input and output lengths do not mean model latency has been removed, nor do they guarantee better sound or real-time performance.
+Output length is based on **actually decoded frames**, not a header estimate: at the original rate, exactly the input frame count; with a rate change, `round(input_frames × output_rate / input_rate)` (half up). Here a frame is one sample per channel at the same instant. Resampler filter delay is compensated and its tail drained. **DFN3's own algorithmic latency is not compensated**, and the backend exposes no model end-of-stream flush. Equal length does not imply latency-free processing. See [DESIGN.md](DESIGN.md) for the stream architecture.
 
-### Raw audio without corrupting the bytes
+### Binary-safe raw streams
 
-Raw audio is **little-endian IEEE 754 `f32`, with interleaved channels**. There is no header, sample rate, or channel metadata. Each frame contains N samples, or `4 × N` bytes. Leftover sample bytes or an incomplete channel frame at EOF cause an error.
+Raw audio is interleaved, little-endian IEEE 754 `f32`, without a header. A frame of N channels occupies `4 × N` bytes. Incomplete samples/channel frames at EOF are errors. Stdin and audio stdout must not be interactive terminals. Only raw f32le is supported on stdout; WAV needs seeking to finalize its header.
 
-```text
-anr denoise - --input-format f32le --input-rate 48000 --input-channels 2 --output - --output-format f32le --model /path/to/dfn3.onnx
+Unix shell example (uses automatic model discovery):
+
+```sh
+anr denoise - --input-format f32le --input-rate 48000 --input-channels 1 --output - --output-format f32le < input.f32le > clean.f32le
 ```
 
-This shows the arguments only; connect binary files or a calling program to stdin/stdout. With `--output -`, stdout contains audio bytes only. Logs, statistics, and errors go to stderr—do not merge it into the audio stream. Stdout must be redirected so binary audio is not sent to a terminal. **WAV stdout is not supported** because writing the WAV header requires seeking.
-
-In Windows `cmd.exe`, use native byte redirection, replacing the paths with real ones:
+Windows `cmd.exe`, with an explicit model:
 
 ```bat
 anr denoise - --input-format f32le --input-rate 48000 --input-channels 1 --output - --output-format f32le --model "C:\models\dfn3.onnx" < input.f32le > clean.f32le
 ```
 
-Unix shells can use the same `< input.f32le > clean.f32le` redirection. Windows PowerShell 5.1 text pipelines and `Get-Content` / `Set-Content` do not preserve raw PCM bytes. PowerShell 7.4+ supports native-to-native byte pipelines and native stdout redirection; still keep stderr separate. See the [official PowerShell redirection documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection?view=powershell-7.5).
+Keep stderr separate—never use `2>&1` for an audio stream. PowerShell 5.1 text pipelines and `Get-Content` / `Set-Content` are not binary-safe. PowerShell 7.4+ supports native byte pipelines and native stdout redirection; see the [PowerShell redirection reference](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection?view=powershell-7.5).
 
-For a cross-platform caller, pass binary file handles directly without shell text conversion. This Python example is optional; Python is not a CLI runtime dependency:
+A caller can pass binary handles directly without shell conversion (Python is optional):
 
 ```python
 import subprocess
@@ -153,71 +151,52 @@ with open("input.f32le", "rb") as source, open("clean.f32le", "wb") as target:
         "anr", "denoise", "-", "--input-format", "f32le",
         "--input-rate", "48000", "--input-channels", "1",
         "--output", "-", "--output-format", "f32le",
-        "--model", "/path/to/dfn3.onnx",
     ], stdin=source, stdout=target, check=True)
 ```
+
+Redirection or the caller opens/truncates `clean.f32le` itself; that file is **not** protected by the CLI's output transaction or `--overwrite` checks. Audio already sent to stdout cannot be rolled back. Check exit status and stderr before accepting a stream as complete.
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | Success, help/version, or `BrokenPipe` when a downstream reader closes stdout early. |
-| `1` | Runtime failure, or at least one failed file in a batch. |
-| `2` | Invalid arguments. |
-| `130` | Cancellation with Ctrl+C. |
+| `0` | Success, help/version, or `BrokenPipe` when a downstream reader closes stdout early. A broken-pipe success does not mean the full recording was produced. |
+| `1` | Runtime failure, including any failed files in a completed batch. |
+| `2` | Argument/usage error. |
+| `130` | Ctrl+C cancellation. |
 
-Cancellation stops the processing loop and removes the current temporary file. A blocked standard stream does not require the caller to send EOF before cancellation can be handled.
+Cancellation unwinds the processing loop and removes the current temporary file; previously committed files remain. Blocked stdin/stdout does not require EOF before cancellation can be handled. Cancellation is cooperative between operations, not a promise to interrupt an in-progress vendor inference call.
 
-### Build with backends and execution providers
+### Backend builds and deployment
+
+| Build feature | Runtime selection | Requirements |
+| --- | --- | --- |
+| `ort-download-binaries` (default) | `--backend ort --provider cpu` | Downloads the prebuilt CPU runtime at build time where available. |
+| `ort` | `--backend ort` | A supplied runtime, configured with `ORT_LIB_LOCATION` for linking. |
+| `ort-load-dynamic` | `--backend ort` | API-27-compatible shared library; `ORT_DYLIB_PATH` points to its file. No ORT downloader/TLS dependency when defaults are disabled. |
+| `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, `ort-xnnpack` | `--provider cuda`, `tensorrt`, `directml`, `coreml`, `xnnpack` | Matching ORT runtime, platform, provider libraries and drivers. DirectML is Windows-only; CoreML is macOS-only. |
+| `gl` | `--backend gl` | Hardware desktop GL 4.3: Windows or Linux EGL/pbuffer. |
+| `gles` | `--backend gles` | Real native ES 3.1+: Windows WGL or Linux hardware EGL/pbuffer, not desktop-GL ES compatibility. No Android/WebGL/macOS context creation. |
+| `vk` | `--backend vk` | Windows/Linux hardware Vulkan 1.1, independent of wgpu. |
+| `wgpu` | `--backend wgpu` | Native hardware Vulkan/DX12/Metal adapter on Windows/Linux/macOS. |
+| `dx` | `--backend dx` | Windows hardware D3D12 and system D3DCompiler 47; not DirectML. |
+| `cuda` | `--backend cuda` | NVIDIA Driver API 12.0+ and NVRTC 12/13 (13 preferred); driver must also support the generated PTX. No build-time CUDA SDK required. |
+| `tensorrt` | `--backend tensorrt` | TensorRT/CUDA SDKs and C++17 compiler at build time; matching runtime libraries and NVIDIA driver at runtime. |
+| `openvino` | `--backend openvino [--openvino-device CPU]` | OpenVINO C++ SDK and C++17 compiler at build time; Runtime, ONNX frontend, device plugin and dependencies at runtime. |
+| `opencl` | `--backend opencl` | OpenCL ICD loader plus hardware GPU vendor runtime/driver with OpenCL C 1.2+, online compiler, and required FP32/device capabilities. No build-time SDK required. |
+
+Features add support; they do not install vendor SDKs or drivers. ORT permits per-operator CPU placement alongside GPU providers; explicit provider registration/initialization failures remain errors. Native GPU backends do not select software/CPU fallback. OpenVINO's default is explicitly CPU; requested GPU/NPU failures remain errors, and NPU arithmetic is device-dependent. CUDA/TensorRT/DirectML ORT sessions prepare the graph in memory through `anr-ort`, without changing the source model or requiring Python; see the [ORT reference](../anr-ort/README.md). GPU in-memory loading currently requires a UTF-8 model directory for external-weight resolution.
+
+Known OpenVINO GPU compatibility issue: compilation of the original graph has failed at `NonZero_1_count` / `count_nonzero` kernel selection. Selecting a GPU does not bypass unsupported operators; NPU support likewise depends on the installed plugin and device.
 
 ```text
 cargo build -p anr-cli --release
-cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
-cargo build -p anr-cli --no-default-features --features ort-load-dynamic
-cargo build -p anr-cli --no-default-features --features gles
-cargo build -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
-```
-
-With no features, the CLI can list compiled support and inspect audio but cannot denoise. `ort` alone enables the backend and links a runtime supplied through `ORT_LIB_LOCATION`; the default `ort-download-binaries` adds CPU runtime downloads. `--no-default-features --features ort-load-dynamic` instead loads your shared library without the downloader or TLS/OpenSSL build dependencies. The `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, and `ort-xnnpack` flags forward ORT providers to `anr` and need the appropriate platform, libraries, or drivers; a feature does not install them. They are distinct from the native `cuda` and `tensorrt` features.
-
-For example, build with DirectML on Windows and select `--provider directml`, or build with CoreML on macOS and select `--provider coreml`. The default remains `cpu`. The project normally allows ORT to place individual operators on CPU alongside CUDA, TensorRT, DirectML, or CoreML when unsupported by that provider or preferred by ORT's placement rules. This is the default policy, not a temporary option; selecting a GPU provider does not promise GPU-only execution. Explicit provider registration or initialization failures remain errors and do not silently replace an unavailable provider with CPU. XNNPACK is itself a CPU provider and also allows ordinary CPU kernels. In `backends --json`, `compiled` means support was built in; `runtime_available: null` means runtime availability has not been checked, not that a model has run successfully.
-
-For ORT's CUDA/TensorRT providers, the CLI automatically prepares an in-memory model before creating each session, using the same `anr-ort` entry point as the benchmark. No extra flag, converted model file, or Python is required. The original ONNX and weights remain unchanged; attenuation stays adjustable. CPU/DirectML and native backends keep their existing loading paths.
-
-
-For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
-
-The optional `gl`, `gles`, `vk`, `wgpu`, `dx`, `cuda`, `tensorrt`, `openvino`, and `opencl` features enable native backends without enabling ONNX Runtime. Use `--no-default-features` to omit ORT, and enable any subset supported by your environment. The default `--backend` remains `ort` even if ORT was not compiled; a native-only build must explicitly select its backend. It cannot be combined with `--provider`, including `--provider cpu`.
-
-For a GLES-only source run, use Cargo so the command runs the binary just built, not an older `anr` on `PATH`:
-
-```text
+cargo build -p anr-cli --no-default-features
 cargo run -p anr-cli --release --no-default-features --features gles -- denoise input.wav --model /path/to/dfn3.onnx --backend gles --output clean.wav
 ```
 
-The GL/GLES/Vulkan/wgpu/D3D12 backends use the original ONNX as a parameter container, not a generic executable graph. The fixed model must have SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`; other exports are rejected even with identical port shapes. They share the fixed execution plan and WGSL operators through `anr-dfn3`, execute FFT, neural network, and synthesis on GPU, and preserve 48 kHz / 480-sample framing, CLI resampling, independent channel state, strength, reset, and exact output length. Strength zero is the original attenuation branch, not an audio bypass.
+A no-feature build can inspect audio and list backends, but cannot denoise. Native features do not enable ORT; use `--no-default-features` to omit it. Native-only builds must pass `--backend` because the argument default remains `ort`.
 
-`gles` requires a real native ES 3.1+ context on Windows/WGL or Linux hardware EGL/pbuffer. It shares `anr-gl`'s executor, generates GLSL ES 310, and maps the output frame after a fence instead of calling desktop-only `glGetBufferSubData`. Desktop-GL ES compatibility is not accepted. This backend does not provide Android, WebGL, or macOS context creation.
-
-`gl` requires Windows desktop GL 4.3 or Linux hardware EGL with desktop GL 4.3/pbuffer; `vk` requires Windows/Linux hardware Vulkan 1.1; `wgpu` uses a native hardware Vulkan/DX12/Metal adapter on Windows/Linux/macOS; `dx` uses Windows hardware D3D12 and system D3DCompiler 47. Native VK/DX do not go through wgpu, and DX is not DirectML. No backend silently selects CPU/software rendering. Unsupported hardware or initialization failures are errors; macOS GPU execution has not been verified.
-
-Do not pass `--provider` with native backends, including `--provider cpu`. `backends --json` lists all ten names without loading runtimes or creating a GPU device. Native entries have no ORT providers and leave `runtime_available` as `null`: this means availability was not probed, not that libraries or devices are ready. Verbose diagnostics identify the selected backend; only ORT emits provider diagnostics.
-
-Real-model CLI tests are opt-in. Set `ANR_DFN3_MODEL` and run `cargo test -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx --test cli compute_ -- --include-ignored`, enabling only features supported by your machine. These tests exercise raw/WAV, independent stereo state, partial-frame length, batch reset, and strength. Every enabled compute backend needs real hardware; an ignored test is not a passing hardware result.
-
-### Native CUDA, TensorRT, OpenVINO, and OpenCL deployment
-
-These four opt-in backends use the same fixed model SHA-256 above and preserve CLI resampling, independent channel state, strength, reset, partial-frame handling, and output length. CUDA and OpenCL run the complete fixed FP32 DSP/FFT/neural plan on GPU. CUDA uses Driver/NVRTC APIs and replay graphs; OpenCL requires a hardware GPU ICD with OpenCL 1.2+, not a CPU implementation. TensorRT builds two real standard-layer neural engines plus CUDA DSP/FFT graphs, with strongly typed FP32 and TF32 disabled; it uses neither ORT, the ONNX parser, nor an inference plugin. There is no persistent TensorRT engine cache: initialization took 17.342 seconds in the recorded run, so do not assume fast cold startup.
-
-OpenVINO imports the original ONNX through its native Runtime, makes the recurrent state stateful, and creates a separate InferRequest for each stream. The default is explicit CPU, never AUTO/HETERO. `--openvino-device GPU`, `GPU.0`, or `NPU` requests that device only; missing devices or unsupported operators are errors, not CPU fallbacks. NPU arithmetic is device-dependent and is not promised to be FP32 merely because the model is FP32.
-
-CUDA and OpenCL need no build-time vendor SDK for their Rust crates, but still need compatible runtime libraries and drivers. TensorRT and OpenVINO require an existing SDK and a C++17 compiler at build time; their `build.rs` compiles a private shared shim, loaded by Rust through `libloading`. Nothing installs an SDK system-wide or downloads one automatically.
-
-```text
-cargo build -p anr-cli --release --no-default-features --features cuda,opencl
-cargo run -p anr-cli --release --no-default-features --features cuda -- denoise input.wav --model /path/to/dfn3.onnx --backend cuda --output clean.wav
-```
-
-For SDK-enabled builds, configure actual SDK paths in the build environment first. For example in PowerShell (replace these paths):
+For SDK builds, set real paths before building (PowerShell example):
 
 ```powershell
 $env:TENSORRT_ROOT = "C:\sdk\TensorRT"
@@ -226,84 +205,49 @@ $env:OPENVINO_ROOT = "C:\sdk\openvino"
 cargo build -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl
 ```
 
-TensorRT needs headers and link libraries under `TENSORRT_ROOT` and `CUDA_ROOT` (or `CUDA_PATH`); `TENSORRT_LIB_DIR` and `CUDA_LIB_DIR` can override the link-library directories. OpenVINO accepts `OPENVINO_ROOT` or `OpenVINO_DIR` pointing into its SDK/CMake layout. The official OpenVINO wheel's `openvino` directory with `include/` and `libs/` is also a supported SDK source; Python is not a product runtime dependency.
+TensorRT accepts `CUDA_PATH` instead of `CUDA_ROOT`, with `TENSORRT_LIB_DIR` / `CUDA_LIB_DIR` overrides for link-library directories. OpenVINO also accepts `OpenVINO_DIR` within its SDK/CMake layout or the official wheel's `openvino` directory containing `include/` and `libs/`; Python is not a runtime dependency of the resulting CLI.
 
-After building, use `--backend tensorrt`, `--backend opencl`, or `--backend openvino --openvino-device CPU`. In contrast, ORT CUDA uses the `ort-cuda` feature and `--backend ort --provider cuda`; ORT TensorRT uses `ort-tensorrt` and `--backend ort --provider tensorrt`. Native backends never inherit ORT's operator-level CPU placement policy.
+For custom deployment:
 
-For custom application distribution, include the model and notices plus the following dependencies; do not rely on absolute paths embedded from the build machine:
+- CUDA loads `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll` on Windows or `libnvrtc.so.13` / `.12` / unversioned on Linux. Put matching NVRTC/builtins libraries on `PATH` or `LD_LIBRARY_PATH`. Driver API 12.0 alone does not guarantee NVRTC 13 PTX compatibility.
+- TensorRT needs the build's `OUT_DIR/anr_tensorrt_native.dll` (Linux: `libanr_tensorrt_native.so`). `ANR_TENSORRT_SHIM` overrides the shim file. On Windows only, `ANR_TENSORRT_RUNTIME` accepts a TensorRT library file or DLL directory; Linux ignores this variable and needs libraries discoverable through platform loader paths such as rpath or `LD_LIBRARY_PATH`. Deploy compatible TensorRT/CUDA libraries as well. There is no persistent engine cache, so engine construction affects cold startup.
+- OpenVINO needs `anr_openvino_native.dll` (`libanr_openvino_native.so` / `.dylib`) from `OUT_DIR`. `ANR_OPENVINO_SHIM` overrides the shim file; `ANR_OPENVINO_RUNTIME` is a Runtime library **file**, not a directory. Preserve the runtime/frontend/plugin layout and configure the platform library search path.
+- Place shims beside the executable or set their overrides. Cargo installation does not collect the private shims or vendor libraries. Do not depend on SDK paths recorded from another build machine.
+- On Windows, TensorRT searches imported DLL names in the shim directory, executable directory, existing absolute `PATH` entries, then recorded SDK directories, deduplicated in that order. Explicit `ANR_TENSORRT_RUNTIME` and `CUDA_ROOT` / `CUDA_PATH` take precedence; invalid overrides fail rather than selecting an unrelated installation. Empty/relative `PATH` entries do not enable current-directory search; the loader does not rewrite `PATH`.
+- Shared ORT linking may need `ORT_PREFER_DYNAMIC_LINK=1` and the platform library search path in addition to `ORT_LIB_LOCATION`. Dynamic loading failures return exit code 1 before output creation.
 
-| Backend | Runtime deployment requirements |
-| --- | --- |
-| CUDA | NVIDIA Driver API 12.0+ and NVRTC major 12 or 13 (13 preferred), with a driver capable of loading the PTX produced by the selected NVRTC. Driver API 12.0 support alone does not guarantee compatibility with NVRTC 13 PTX. Windows loads `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`; Linux loads `libnvrtc.so.13` / `.12` / unversioned. Put matching NVRTC/builtins libraries on `PATH` (Windows) or `LD_LIBRARY_PATH` (Linux). |
-| TensorRT | `anr_tensorrt_native.dll` (Linux: `libanr_tensorrt_native.so`) from the Cargo build's `OUT_DIR`, plus compatible TensorRT/CUDA runtime libraries and driver. `ANR_TENSORRT_SHIM` overrides the shim **file**; `ANR_TENSORRT_RUNTIME` accepts a TensorRT DLL directory or library file. Also configure the vendor-library search path, including NVRTC/builtins. |
-| OpenVINO | `anr_openvino_native.dll` (`libanr_openvino_native.so` / `.dylib`) from `OUT_DIR`, plus matching OpenVINO Runtime, ONNX frontend, chosen device plugin, and their dependencies. `ANR_OPENVINO_SHIM` overrides the shim **file**; `ANR_OPENVINO_RUNTIME` points to the Runtime library **file**, not a directory. Preserve the vendor runtime/plugin layout and configure the platform library search path. |
-| OpenCL | System OpenCL ICD loader and a vendor hardware-GPU ICD/runtime/driver supporting OpenCL 1.2+. A loader alone is not a GPU implementation. |
+Hardware-dependent tests are opt-in: set `ANR_DFN3_MODEL` and use `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`, selecting only locally supported features and adding SDK features only with their SDKs configured. These tests cover stream/file behavior, not perceptual quality or universal device compatibility. [benchmark.md](../../benchmark.md) records performance measurements separately.
 
-On Windows, the TensorRT loader matches the DLL names imported by the shim. Its default search order is the shim directory, the executable directory, existing absolute `PATH` directories in order, then the recorded SDK directories, with duplicates removed across stages. Empty/relative `PATH` entries do not enable current-working-directory searches. Explicit `ANR_TENSORRT_RUNTIME` and `CUDA_ROOT` / `CUDA_PATH` overrides always take precedence and must provide their matching runtime family; an invalid override is an error, not permission to select another directory or installed version. The loader does not rewrite the process `PATH`.
+### License
 
-Keep shims beside the executable or set their explicit overrides. Merely copying `anr` does not deploy these dependencies, and Cargo installation does not automatically collect the private shims or vendor libraries. Check each vendor's redistribution terms in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); driver/SDK redistribution is not granted by this project's license. Default release ZIPs remain CPU ORT packages and do not bundle these SDKs or native runtimes.
-
-To exercise real CLI paths after configuring the SDKs, runtimes, hardware, and `ANR_DFN3_MODEL`, run `cargo test -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl --test cli compute_ -- --include-ignored`, selecting only available features. Recorded Windows x64 acceptance completed with exit 0, 10 passed and 0 ignored, covering raw/WAV, independent stereo state, exact tail length, strength, and batch reset. CUDA/TensorRT/OpenCL ran on RTX 2080 Ti; OpenVINO ran explicitly on AMD Ryzen 7 5800X CPU. SDK/runtime versions were CUDA 13.3, TensorRT 10.16.1, and OpenVINO 2026.4.0. All four also passed the streaming reference. OpenVINO GPU compilation failed on the original graph's `NonZero_1_count` / `count_nonzero` kernel selection; NPU was not tested. These are not Linux/macOS GPU, other-device, sound-quality, or real-time guarantees.
-
-
-### What has been tested
-
-CI is configured for Windows x64 (`windows-2025`), Linux x64 (`ubuntu-24.04`), macOS arm64 (`macos-15`), and macOS x64 (`macos-15-intel`), using Rust stable. SDK-free workspace gates exclude `anr-tensorrt` and `anr-openvino`; explicit feature sets avoid accidentally enabling SDK-dependent features through `--all-features`. The workflow covers ordinary tests, the explicit CPU ORT real-model test, no-backend and native-only non-GPU CLI tests, lint/compile/doc checks, and extracted-ZIP CPU inference. SDK builds and hardware-dependent native tests require separate configured environments. This is a description of the workflow, not evidence that hosted jobs have passed. Runner labels are documented by [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-
-The small ONNX control graphs check processing, state, and stream formats. They are not DFN3 weights and do not establish real-model sound quality. Record real-model results, compressed format variants, optional providers, and minimum OS/runtime requirements separately. A Linux GNU build does not establish support for musl or arbitrarily old glibc. The tool does not provide real-time audio devices, virtual microphones, drivers, or a cloud service.
-
-Recorded local verification used Rust 1.99; that records the environment, not a fixed MSRV:
-
-| Environment | Executed checks | Not established by these checks |
-| --- | --- | --- |
-| Windows x64 / RTX 2080 Ti | Real-model ORT inference; GL/GLES/Vulkan/wgpu/D3D12 against the independent 61-frame reference; CLI raw/WAV, stereo isolation, tail length, strength, and batch reset. | Other GPUs' behavior, sound-quality improvement, or real-time performance. |
-| WSL Ubuntu 24.04 x64 | ORT inference and CPU ZIP smoke checks; compute-only compilation and non-GPU tests, including GLES-only tests and Clippy. | Linux GPU execution or support for other Linux distributions/libc versions. |
-| macOS arm64/x64 | Native-runner workflow configuration only. | Local native, packaging/signing, or GPU results. |
-
-Earlier installed-release checks covered unrelated working directories, model/runtime relocation, raw and unknown-length WAV stdin, closed stdout, cancellation, and protected file aliases. These are recorded coverage, not current test-count promises. Real minimal runtimes, ORT GPU/NPU providers, and hosted CI jobs remain unverified locally.
-
-### License and redistribution
-
-The project code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Including both full texts in each standalone source package is this project's distribution choice, not a Cargo requirement.
-
-Dependencies and model weights keep their own licenses. The supplied model asset and its matching manifest are explicitly **MIT OR Apache-2.0** as authorized by the maintainer; the ZIP includes `models/LICENSE-MIT`, `models/LICENSE-APACHE`, and `models/NOTICE.md`. This does not grant rights to unrelated model exports. Symphonia and the ORT adapter's `onnx-protobuf` use MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and optional providers have separate terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for source availability, modification, and binary redistribution obligations.
+Project code is **MIT OR Apache-2.0**: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model provenance and the supplied asset's authorization are documented in the [model notice](../../.github/models/NOTICE.md). Dependencies, runtimes, models, and SDKs retain their own terms; redistribution and source-availability obligations are collected in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## 简体中文
 
-`anr-cli` 提供命令 `anr`，用于音频文件降噪、逐个文件的批处理，以及 stdin/stdout 音频管道。它通过 `anr` 调用 DFN3，默认使用 ONNX Runtime，也可选择不依赖 ORT 的独立 OpenGL、OpenGL ES、Vulkan、wgpu、Direct3D 12 Compute、CUDA、TensorRT、OpenVINO 和 OpenCL 后端。CLI 自行完成解码、带限重采样和多声道处理，运行时不需要 FFmpeg 或 Python。
+`anr-cli` 提供 `anr` 命令，用于 DFN3 音频降噪：单文件、串行批处理和 stdin/stdout 流。CLI 负责解码、带限重采样和声道独立状态，默认使用 ONNX Runtime（ORT），另有九种可选原生后端。处理音频不需要 FFmpeg 或 Python。本工具不提供音频设备驱动或虚拟麦克风。
 
-源码构建需要 **最新 Rust stable 工具链**。默认 features 会在构建时下载并准备固定 DFN3 模型，`cargo install` 也适用；应用 ZIP 附带同一模型和 CPU 运行库。`--model` 可省略：显式路径优先，否则先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时记录的模型源文件，不假定源码目录或当前工作目录。ORT 后端只接受下表三个输入和三个输出，均为 `f32`：
+### 安装
 
-| 方向 | 名称 | 运行时的大小 |
-| --- | --- | --- |
-| 输入 | `input_frame` | `[480]` |
-| 输入 | `states` | `[45304]` |
-| 输入 | `atten_lim_db` | `[]` 或 `[1]` |
-| 输出 | `enhanced_audio_frame` | `[480]` |
-| 输出 | `new_states` | `[45304]` |
-| 输出 | `lsnr` | `[]` 或 `[1]` |
+#### 应用 ZIP
 
-一维长度可用符号维度声明，但运行时长度不能改变。这些是 ORT 的端口检查，不是 Compute 后端的兼容性判断；Compute 另要求后文指定的精确 SHA-256。模型授权、音质和算法延迟需分别核实。
+[发布工作流](../../.github/workflows/ci.yml) 为 Windows x64、Linux x64、macOS arm64 和 macOS x64 打包 `anr-<版本或提交>-<target>.zip`，包含可执行文件、CPU ONNX Runtime **1.28.0**、`models/dfn3.onnx` 和许可/通知。独立的[模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 只提供模型资产，不是 CLI。
 
-### 安装与第一次运行
-
-#### 使用应用 ZIP
-
-Release workflow 在平台检查通过后，为 Windows x64、Linux x64、macOS Apple Silicon 和 macOS Intel 生成 `anr-<版本或提交>-<target>.zip`。ZIP 包含可执行文件、CPU ONNX Runtime **1.28.0**、`models/dfn3.onnx` 和适用许可，处理音频不需要 Rust、Python 或 FFmpeg。[模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 是独立模型资产，不是 CLI 安装包。
-
-完整解压，进入解压目录后运行：
+使用打包版本时，先核对附带的 `SHA256SUMS`，完整解压后运行：
 
 ```sh
 ./anr denoise input.wav --output clean.wav
 ```
 
-Windows 使用 `.\anr.exe`。模型从可执行文件旁自动查找，不受当前工作目录影响；随包共享库需与可执行文件保持同目录。默认不需设置 `ORT_DYLIB_PATH`，若以前设置过它，想用随包运行库时应先移除旧的覆盖值。
+Windows 使用 `.\anr.exe`。运行库和 `models/` 应保留在可执行文件旁，自动查找不依赖当前工作目录。已有 `ORT_DYLIB_PATH` 会覆盖随包运行库；使用随包版本时应移除该设置。
 
-Windows 可能需要安装微软 [Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。Linux 包在 Ubuntu 24.04 构建，使用 glibc，不等于支持 musl 或任意旧 glibc。macOS 包使用 ad-hoc 签名，未公证；下载后按系统提示允许打开。不包含 GPU provider。使用前核对 Release 附带的 `SHA256SUMS`。
+- Windows 可能需要 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。
+- Linux 包在 Ubuntu 24.04 上构建，使用 glibc，不是 musl 包，也不保证兼容更旧的 glibc。
+- macOS 包使用 ad-hoc 签名，未公证；下载后按系统要求完成允许打开的操作。
+- 包内只有 CPU ORT，不包含 GPU provider 或原生厂商 SDK。打包配置不等于平台测试结果；发布流程见 [RELEASING.md](../../RELEASING.md)。
 
-#### 从源码构建
+#### 从源码安装
 
-在源码工作区根目录安装。默认构建方式使用 ORT 提供的预编译库；**Intel macOS 请改用后面的自备运行库方式。**
+使用最新 Rust stable，在源码工作区根目录执行：
 
 ```text
 cargo install --path crates/anr-cli --locked
@@ -311,17 +255,9 @@ anr --help
 anr backends --json
 ```
 
-二进制名是 `anr`，不是 `anr-cli`。把安装目录加入 `PATH`，或用完整路径运行可执行文件。从 crates.io 安装 `0.1.1` 可使用 `cargo install anr-cli --version 0.1.1 --locked`。
+二进制名为 `anr`，不是 `anr-cli`；将 Cargo 安装目录加入 `PATH`。构建依赖平台工具链：Windows 需要 MSVC C++ 工具和 Windows SDK；Linux 需要 C/C++ 链接工具、`pkg-config` 和 OpenSSL 开发文件（例如 `libssl-dev`）；macOS 需要 Xcode Command Line Tools。默认 features 下载预编译 CPU ORT 并准备模型，首次构建通常需要联网。
 
-默认 features 为 `ort-download-binaries`、`download-models` 和 `copy-models`：启用 ORT 后端，下载预编译 CPU 运行库和固定模型，并将模型复制到构建产物旁。首次构建需要网络、目标工具链和平台支持：
-
-- Windows：MSVC C++ 工具链和 Windows SDK。
-- Linux：C/C++ 链接工具链、`pkg-config` 和 OpenSSL 开发文件，例如 Ubuntu 的 `libssl-dev`。
-- macOS：Xcode Command Line Tools。
-
-当前 `ort 2.0.0-rc.15` 的默认预编译运行库为 1.31.0，不包含 Intel macOS。该平台需自行构建，或使用兼容 API 27 的共享库，包括 1.28.0；只安装 Rust target 不够。
-
-例如，在 Intel macOS 上准备好兼容的 CPU `libonnxruntime.dylib` 后，在运行 `anr` 的环境里设置实际绝对路径，再安装动态加载版本：
+**Intel macOS 需要自备或源码构建 ORT 运行库**，不能假定有预编译版本。准备好兼容 API 27 的 CPU 共享库（包括 ONNX Runtime 1.28.0）后，例如：
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
@@ -329,87 +265,103 @@ cargo install --path crates/anr-cli --locked --no-default-features --features or
 anr backends --json
 ```
 
-把路径换成真实文件，并在以后运行时保留设置。`backends` 只列出编译时加入的支持，实际执行 `denoise` 才会加载并使用运行库。可按 [ONNX Runtime CPU 源码构建说明](https://onnxruntime.ai/docs/build/inferencing.html) 准备运行库；CI 固定构建 [微软 v1.28.0](https://github.com/microsoft/onnxruntime/releases/tag/v1.28.0)，不假设该 release 提供 Intel macOS 预编译包。此时 CMake、Python 等只用于源码构建，不是安装后 CLI 处理音频的依赖。
+路径必须指向实际的库**文件**，后续运行时仍需保留设置。自行构建 ORT 的工具要求见[上游说明](https://onnxruntime.ai/docs/build/inferencing.html)；其中的 Python/CMake 不是安装后 CLI 处理音频的依赖。
 
-处理单文件、批处理和信息查询：
+### 命令与模型选择
 
 ```text
 anr denoise voice.wav --output clean.wav
 anr denoise a.flac b.mp3 --output-dir cleaned
 anr inspect voice.wav
 anr inspect voice.wav --json
+anr backends --json
+anr denoise --help
 ```
 
-需要其他模型时使用 `--model /path/to/dfn3.onnx`，替换为自己有权使用的实际路径；Windows 同样可用带引号的本机路径。显式相对路径以启动命令时的工作目录为准，自动查找则先以可执行文件位置为准，再使用构建时记录的路径。`inspect` 不加载模型；`backends` 只说明编译时加入了哪些支持，不证明运行库或 GPU 已能使用。
+`inspect` 探测所选音轨，不加载模型，也不解码整段录音。JSON 字段为 `format`、`codec`、`track_id`、`sample_rate`、`channels`、`frames`、`duration_seconds`；未知帧数/时长为 `null`，已知时长来自文件头。它接受带头输入，不提供 raw 规格参数。
 
-`download-models` 将通过摘要校验的模型缓存到 `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/`，默认 Cargo home 为 `~/.cargo`。`copy-models` 独立负责复制，在 Cargo profile、示例和测试目录下生成 `models/dfn3.onnx`。**构建前**将 `ANR_MODEL_PATH` 设为本地文件的绝对路径，即可跳过模型下载，或单独使用 `copy-models`。仅下载的构建和 `cargo install` 可使用持久源路径，不要求程序旁已有副本。向其他机器分发时应附带模型及适用许可、通知，不能依赖原构建机器的缓存。运行时不下载模型。
+`backends` 列出十种后端及其编译状态；ORT 另列 `cpu`、`cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack`。所有 `runtime_available` 均为 `null`：该命令不加载运行库、不创建设备，也不执行推理。
 
-关闭 default features 可去掉自动模型准备及下载器依赖，之后需传入 `--model`、随程序提供模型，或按需重新启用模型 features。缓存缺失且设置 `CARGO_NET_OFFLINE=true` 时会报错而非联网；离线构建可设置 `ANR_MODEL_PATH`。详情见 [模型准备说明](../anr/README.md#模型下载与复制)。
+`--model PATH` 可省略。显式路径优先且失败不回退，相对路径以当前工作目录为准。省略时先用可执行文件旁的 `models/dfn3.onnx`，再用构建时记录的模型源路径；随包模型无效会报错，不改试另一模型。运行时不下载模型。
 
-### 参数与批处理
+默认 features 为 `ort-download-binaries`、`download-models`、`copy-models`：
+
+- `download-models` 下载并校验固定模型，缓存到 `$CARGO_HOME/anr/models/dfn3-fe5eb64fa2e4/`，默认 Cargo home 为 `~/.cargo`。
+- `copy-models` 将准备好的模型复制到 Cargo profile、examples 和测试输出目录中的 `models/dfn3.onnx`。
+- **构建前**将 `ANR_MODEL_PATH` 指向本地模型可跳过下载；单独启用 `copy-models` 时必须设置。建议使用绝对路径保证构建可复现。缓存缺失且 `CARGO_NET_OFFLINE=true` 时直接报错。
+- `cargo install` 可使用持久的构建时模型源路径。迁移到另一机器时，应在可执行文件旁提供模型及其许可/通知，不能依赖原机器缓存。
+
+关闭默认 features 会同时去掉自动模型准备和默认 ORT 支持。模型准备见[库参考](../anr/README.md)，ORT 模型端口要求见 [ORT 参考](../anr-ort/README.md)。原生后端要求原模型精确匹配以下 SHA-256：
 
 ```text
-anr denoise INPUT... --output PATH [--model MODEL] [OPTIONS]
-anr denoise INPUT... --output-dir DIR [--model MODEL] [OPTIONS]
-anr inspect INPUT [--json]
-anr backends [--json]
+fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9
 ```
 
-| 参数 | 含义 |
+其他导出即使张量形状相同，也不代表兼容原生后端。
+
+### denoise 参数
+
+```text
+anr denoise INPUT... --output PATH [OPTIONS]
+anr denoise INPUT... --output-dir DIR [OPTIONS]
+```
+
+| 参数 | 行为与默认值 |
 | --- | --- |
-| `INPUT...` | 明确列出的文件路径；单输入时可用 `-` 表示 stdin。程序不递归扫描目录，也不自行展开 glob。 |
-| `--output PATH` | 单输入的目标文件；`-` 表示 stdout。与 `--output-dir` 互斥。 |
-| `--output-dir DIR` | 逐个处理文件，按输入文件名去掉扩展名后生成 `.wav`，明确选择 raw 时生成 `.f32le`。同名结果不自动改名。 |
-| `--model PATH` | 可选的模型覆盖路径；省略时使用随程序或构建时准备的模型。显式路径无效时直接报错，不改用默认模型。 |
-| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | 默认 `ort`。各原生后端需要主动启用对应 Cargo feature，并使用后文说明的固定模型。 |
-| `--provider cpu` | 仅适用于 ORT，ORT 未传时默认 `cpu`；其他 provider 需对应 feature 和运行环境。任何非 ORT 后端与显式 `--provider` 同用均为参数错误。 |
-| `--openvino-device CPU\|GPU\|GPU.n\|NPU` | 仅适用于 OpenVINO，省略时明确使用 `CPU`；`GPU.n` 指定 GPU 索引，例如 `GPU.0`。GPU/NPU 失败不切换 CPU。与其他后端同用为参数错误。 |
-| `--strength 80` | 默认 80；必须是 `0..=100` 的有限数值，拒绝 NaN、无穷和越界值，不静默修正。 |
-| `--input-format auto\|f32le` | 默认探测带头音频；raw 必须明确选 `f32le`。 |
-| `--input-rate HZ` / `--input-channels N` | raw 输入必填的正数；带头音频不能用它们覆盖真实规格。 |
-| `--output-format wav\|f32le` | 文件可由 `.wav` / `.f32le` 扩展名识别；其他扩展名须明确指定。stdout 必须明确选 `f32le`。 |
-| `--output-rate HZ` | 可选正采样率；默认保留输入采样率。 |
-| `--wav-format pcm16\|pcm24\|float32` | 默认 PCM16；raw 输出不能显式指定此参数。 |
-| `--overwrite` | 允许处理完成后替换已有目标，仍禁止覆盖输入、模型或本批次已经成功保存的结果。 |
-| `--quiet` / `--verbose` | 互斥的全局选项，控制 stderr 诊断，不改变音频 stdout。 |
+| `INPUT...` | 一个或多个明确路径。`-` 表示 stdin，只能单输入并使用 `--output`。不递归遍历目录，不在程序内展开 glob。 |
+| `-o, --output PATH` | 单输入目标；`-` 表示 stdout。与 `--output-dir` 互斥。 |
+| `--output-dir DIR` | 必要时创建目录，串行生成 `stem.wav`，明确选择 raw 时生成 `stem.f32le`。同名目标报错，不自动改名。 |
+| `--model PATH` | 可选覆盖路径，查找顺序见上文。`--model -` 指真实文件，不是 stdin。 |
+| `--backend ort\|gl\|gles\|vk\|wgpu\|dx\|cuda\|tensorrt\|openvino\|opencl` | 默认 `ort`，native-only 构建也一样。须明确选择已编入的后端。 |
+| `--provider cpu\|cuda\|tensorrt\|directml\|coreml\|xnnpack` | 仅适用于 ORT，省略时为 `cpu`。任何原生后端与显式 provider 同用均为参数错误。 |
+| `--openvino-device DEVICE` | 仅适用于 OpenVINO：`CPU`（默认）、`GPU`、`GPU.n`（如 `GPU.0`）、`NPU`。不选 AUTO/HETERO，请求 GPU/NPU 失败不回退 CPU。 |
+| `--strength VALUE` | 默认 `80`，接受有限 `0..=100`，不静默修正非法参数。零保留 DFN3 衰减分支，不是原音旁路。 |
+| `--input-format auto\|f32le` | 默认 `auto` 探测带头音频；raw PCM 必须明确选 `f32le`。 |
+| `--input-rate HZ` / `--input-channels N` | raw 必填正数，采样率为 `u32`、声道数为 `u16`。`auto` 不接受，不可覆盖音频头。 |
+| `--output-format wav\|f32le` | 文件按 `.wav` / `.f32le` 扩展名识别，忽略大小写；其他扩展名需明确指定。目录输出默认 WAV；stdout 必须明确选 `f32le`。 |
+| `--output-rate HZ` | 正 `u32`，默认输入采样率。 |
+| `--wav-format pcm16\|pcm24\|float32` | 默认 `pcm16`；raw 输出显式设置此项报错。 |
+| `--overwrite` | 只在处理成功后替换已有目标；仍禁止覆盖输入、所选模型和本批次已保存的结果。 |
+| `-q, --quiet` / `-v, --verbose` | 互斥全局选项。quiet 保留错误；verbose 增加处理规格。诊断和完成统计写 stderr。 |
+| `-h, --help` / `-V, --version` | 显示帮助 / 顶层版本并退出。 |
 
-批处理在开始输出前检查全局参数、模型/后端（ORT 还检查 provider）和可确定的目标冲突，并在处理前及提交前复核实际文件身份，包括大小写不敏感文件系统的别名。如果先前不存在的别名在本批次较早的结果保存后才显现，后一个文件会失败，不会覆盖先前结果。每个声道持有独立 reducer，文件间复用并重置状态；失败文件清理临时输出并继续，最终退出 1，成功文件保留。若文件已经保存但无法核验其身份，会明确报告已保存并停止后续处理；不撤销整批结果。
+创建输出前先完成全局参数、目标冲突、运行库/provider 和首个模型实例的检查；输出目录创建后再次检查。输入、模型的路径和文件身份用于保护别名、符号链接、硬链接和大小写不敏感冲突，每个文件处理前及提交前复核。后续目标若成为已完成结果的别名，会报错而非覆盖。
 
-文件先写到目标同目录的临时文件，推理、编码和 WAV 文件收尾全部完成后才移到最终路径。默认不覆盖；即使使用 `--overwrite`，也不会在开始处理前截断旧文件。这不保证断电后数据仍然完整。stdout 已发出的字节无法撤回；失败时必须检查退出码和 stderr，不能把部分音频流当完整结果。
+每声道独立引擎，尽量复用，文件间重置。单文件解码、推理或输出失败会删除其临时输出并继续其他文件；全局初始化失败、新增声道引擎初始化失败、取消和 BrokenPipe 则停止批次。已成功文件保留，不整批回滚。文件已保存但无法核验其身份时，会明确报告并停止。
 
-### 音频格式和时长
+文件写到目标同目录的临时文件，推理、编码及 WAV finalize 全部成功后才提交；默认提交不覆盖并发创建的目标。即使使用 `--overwrite`，也不提前截断旧文件，但不保证断电持久性。`--output-dir` 创建所需父目录；使用 `--output` 时父目录必须已存在。
 
-带头输入使用 Symphonia 0.5.5 的解码器和容器探测，启用其 `all` features，包括 WAV/PCM、FLAC、MP3、Ogg/Vorbis、AAC-LC/M4A 等支持。**容器可识别，不代表里面所有 codec/profile 都能解码。** 例如 Opus 不在当前 codec 集合内。具体文件仍以解码结果为准；这里没有声称所有编码变体或平台都已实测通过。
+### 格式、时长与延迟
 
-多音轨默认选择第一个可解码音轨；`inspect` 显示所选音轨、采样率、声道等信息。JSON 字段为 `format`、`codec`、`track_id`、`sample_rate`、`channels`、`frames`、`duration_seconds`；未知帧数或时长为 `null`。处理过程中改变采样率或声道数会报错。不可 seek 的编码 stdin 还受 demuxer 限制，需要 seek 的输入可能失败；CLI 不会因此缓存整条输入或暗中写入磁盘。
+使用 Symphonia 0.5.5 的 `all` features 探测容器和解码，包括 WAV/PCM、FLAC、MP3、Ogg/Vorbis、AAC-LC/M4A。容器可识别不代表其中每种 codec/profile 都受支持，例如当前 codec 集合不含 Opus。选择第一个具有可用解码器的音轨；处理过程中切换音轨、采样率或声道布局会报错。
 
-对有可靠声明帧数的固定宽度 WAV，按实际解码帧数校验完整性；提前 EOF 会报错，不能提交短音频替换旧目标。未知长度 WAV 标记仍允许流式读取，压缩格式的估算时长不作为精确校验预算。这不表示能够发现每一种容器或 codec 损坏。
+带头 stdin 不可 seek，需要 seek 的容器可能失败；CLI 不缓存整条流，也不暗中落盘。固定宽度 WAV 有可靠声明帧数时会校验提前 EOF；未知长度 WAV 标记仍可流式读取。压缩格式估算时长不作精确完整性预算，`inspect` 也不是整文件完整性校验。
 
-输出是 PCM16、PCM24 或 float32 WAV，或 raw f32le；不提供 MP3/AAC 编码。WAV 只写必要音频头和采样，不承诺保留封面、标签、章节或特殊声道布局标记。整数 WAV 会限制到可表示范围；非有限采样会报错。
+输出为 WAV（PCM16、PCM24、float32）或 raw f32le，不提供 MP3/AAC 编码。WAV 写入采样和必要头部，不保留原标签、封面、章节或特殊声道布局元数据。整数采样四舍五入并限制范围；输入/输出出现非有限采样会报错。WAV 受 RIFF 32 位长度字段限制，不支持 RF64 输出。
 
-每声道使用独立模型状态，保留声道数量与排列，不自动混音。处理时使用有界缓冲，不把整段录音读入内存；跨解码包积攒完整模型帧，只在 EOF 补最后一帧。必要时先重采样到模型的 48 kHz，再转到输出采样率；采样率相同时跳过重采样。默认输出帧数等于实际解码输入帧数；明确换采样率时为 `round(输入帧数 × 输出采样率 / 输入采样率)`。这里一帧指每声道同一时刻的一个采样。
+管线保留声道数量和排列，不自动混音，使用有界流式缓冲，转换到 DFN3 的 **48 kHz / 480 采样**帧，再转到输出采样率；同采样率阶段绕过重采样。解码包之间积攒模型帧，只在 EOF 补最后一帧，随后裁掉补零。
 
-重采样器的滤波延迟会补偿，补零部分会裁剪，但 **DFN3 模型本身的算法延迟不会猜测或补偿**，后端也没有在音频结束后取出模型剩余结果的操作。输出等长不等于模型延迟已消除，也不保证音质提升或实时性能。
+输出长度按**实际解码帧数**而非头部估算计算：原采样率下等于输入帧数，换采样率时为 `round(输入帧数 × 输出采样率 / 输入采样率)`（半入）。这里一帧指同一时刻每声道各一个采样。重采样滤波延迟会补偿，并排出滤波尾部；**DFN3 自身算法延迟不补偿**，后端也没有模型流尾 flush 接口。等长不等于零延迟。管线架构见 [DESIGN.md](DESIGN.md)。
 
-### 不损坏音频字节的 raw 管道
+### 二进制安全的 raw 流
 
-raw 格式是 **小端 IEEE 754 `f32`，声道交错**，没有文件头、采样率或声道信息。每帧有 N 个采样，共 `4 × N` 字节；EOF 仍有残余采样字节或不完整声道帧时会报错。
+raw 为无头、交错排列、小端 IEEE 754 `f32`；N 声道每帧 `4 × N` 字节。EOF 时不完整采样或声道帧报错。stdin 和音频 stdout 不能是交互终端。stdout 只支持 raw f32le；WAV 需要 seek 回填头部。
 
-```text
-anr denoise - --input-format f32le --input-rate 48000 --input-channels 2 --output - --output-format f32le --model /path/to/dfn3.onnx
+Unix shell 示例（自动查找模型）：
+
+```sh
+anr denoise - --input-format f32le --input-rate 48000 --input-channels 1 --output - --output-format f32le < input.f32le > clean.f32le
 ```
 
-上面只展示参数，必须通过文件或调用程序接入二进制 stdin/stdout。`--output -` 的 stdout 只有音频字节；日志、统计和错误均写 stderr，不要把它合并进音频流。stdout 必须重定向，以免向终端发送二进制音频。WAV 需要 seek 回填头部，**不支持 WAV stdout**。
-
-Windows `cmd.exe` 中可以用原生字节重定向，将路径替换为实际值：
+Windows `cmd.exe` 示例（显式模型）：
 
 ```bat
 anr denoise - --input-format f32le --input-rate 48000 --input-channels 1 --output - --output-format f32le --model "C:\models\dfn3.onnx" < input.f32le > clean.f32le
 ```
 
-Unix shell 可用相同的 `< input.f32le > clean.f32le` 重定向。Windows PowerShell 5.1 的文本管道、`Get-Content` / `Set-Content` 不能原样传递 PCM 字节。PowerShell 7.4+ 支持 native-to-native 字节管道和 native stdout 重定向，仍不要合并 stderr；见 [PowerShell 官方重定向说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection?view=powershell-7.5)。
+stderr 必须分离，音频流不要使用 `2>&1`。PowerShell 5.1 文本管道及 `Get-Content` / `Set-Content` 不保证二进制字节；PowerShell 7.4+ 支持原生命令字节管道和 stdout 重定向，见[官方说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection?view=powershell-7.5)。
 
-跨平台调用可直接传入二进制文件句柄，不经过 shell 文本转换。下面的 Python 只是可选调用示例，不是 CLI 运行依赖：
+调用程序可直接传二进制句柄，避开 shell 转换；Python 只是可选示例：
 
 ```python
 import subprocess
@@ -419,71 +371,52 @@ with open("input.f32le", "rb") as source, open("clean.f32le", "wb") as target:
         "anr", "denoise", "-", "--input-format", "f32le",
         "--input-rate", "48000", "--input-channels", "1",
         "--output", "-", "--output-format", "f32le",
-        "--model", "/path/to/dfn3.onnx",
     ], stdin=source, stdout=target, check=True)
 ```
 
+重定向或调用程序自行打开/截断 `clean.f32le`，该文件**不受** CLI 文件事务或 `--overwrite` 检查保护。stdout 已发送音频无法撤回，必须检查退出码和 stderr 再接受为完整流。
+
 | 退出码 | 含义 |
 | --- | --- |
-| `0` | 成功、help/version，或下游提前关闭 stdout 的 `BrokenPipe`。 |
-| `1` | 运行失败，或批处理中至少一个文件失败。 |
-| `2` | 参数错误。 |
-| `130` | Ctrl+C 主动取消。 |
+| `0` | 成功、help/version，或下游提前关闭 stdout 导致的 `BrokenPipe`。BrokenPipe 成功不代表已输出整段录音。 |
+| `1` | 运行失败，包括批次处理结束后有文件失败。 |
+| `2` | 参数/用法错误。 |
+| `130` | Ctrl+C 取消。 |
 
-取消时退出处理循环并清理当前临时文件；即使标准流阻塞，也不需要调用者先发送 EOF 才能响应取消。
+取消会退出处理循环并清理当前临时文件，已提交文件保留。stdin/stdout 阻塞时也无需先发送 EOF 才能响应。取消是操作之间的协作检查，不保证中断正在执行的厂商推理调用。
 
-### 编入不同后端与执行 provider
+### 后端构建与部署
+
+| 构建 feature | 运行选择 | 要求 |
+| --- | --- | --- |
+| `ort-download-binaries`（默认） | `--backend ort --provider cpu` | 构建时在可用平台下载预编译 CPU 运行库。 |
+| `ort` | `--backend ort` | 自备运行库，通过 `ORT_LIB_LOCATION` 配置链接。 |
+| `ort-load-dynamic` | `--backend ort` | 兼容 API 27 的共享库，`ORT_DYLIB_PATH` 指库文件；关闭默认 features 时不引入 ORT 下载器/TLS 依赖。 |
+| `ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack` | `--provider cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` | 匹配的 ORT 运行库、平台、provider 库和驱动。DirectML 仅 Windows，CoreML 仅 macOS。 |
+| `gl` | `--backend gl` | 硬件桌面 GL 4.3：Windows 或 Linux EGL/pbuffer。 |
+| `gles` | `--backend gles` | 真实原生 ES 3.1+：Windows WGL 或 Linux 硬件 EGL/pbuffer，不接受桌面 GL 的 ES 兼容模式；无 Android/WebGL/macOS context 创建。 |
+| `vk` | `--backend vk` | Windows/Linux 硬件 Vulkan 1.1，不经过 wgpu。 |
+| `wgpu` | `--backend wgpu` | Windows/Linux/macOS 原生硬件 Vulkan/DX12/Metal adapter。 |
+| `dx` | `--backend dx` | Windows 硬件 D3D12 与系统 D3DCompiler 47，不是 DirectML。 |
+| `cuda` | `--backend cuda` | NVIDIA Driver API 12.0+、NVRTC 12/13（优先 13），驱动还须支持产生的 PTX；构建不需 CUDA SDK。 |
+| `tensorrt` | `--backend tensorrt` | 构建需 TensorRT/CUDA SDK 与 C++17 编译器；运行需匹配库和 NVIDIA 驱动。 |
+| `openvino` | `--backend openvino [--openvino-device CPU]` | 构建需 OpenVINO C++ SDK 与 C++17 编译器；运行需 Runtime、ONNX frontend、设备 plugin 及依赖。 |
+| `opencl` | `--backend opencl` | OpenCL ICD loader 和硬件 GPU 厂商运行库/驱动，支持 OpenCL C 1.2+、在线编译及所需 FP32/设备能力；构建不需 SDK。 |
+
+features 只编入支持，不安装 SDK 或驱动。ORT 允许 GPU provider 与逐算子 CPU 分配共存，显式 provider 注册/初始化失败仍报错。原生 GPU 后端不选择软件/CPU 回退。OpenVINO 默认明确选 CPU，请求 GPU/NPU 失败不回退，NPU 运算精度取决于设备。ORT CUDA/TensorRT/DirectML session 通过 `anr-ort` 在内存准备图，不改原模型，也不需 Python；见 [ORT 参考](../anr-ort/README.md)。GPU 内存加载目前要求模型目录可表示为 UTF-8，以解析外部权重。
+
+已知 OpenVINO GPU 兼容性问题：原图编译曾在 `NonZero_1_count` / `count_nonzero` kernel 选择处失败。选择 GPU 不会绕过不支持的算子；NPU 支持同样取决于安装的 plugin 和设备。
 
 ```text
 cargo build -p anr-cli --release
-cargo build -p anr-cli --no-default-features
 cargo build -p anr-cli --features ort-directml
-cargo build -p anr-cli --no-default-features --features ort-load-dynamic
-cargo build -p anr-cli --no-default-features --features gles
-cargo build -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
-```
-
-完全不启用 features 时，可以列能力和检查音频，但不能降噪。`ort` 只启用后端，通过 `ORT_LIB_LOCATION` 链接自备运行库；默认 `ort-download-binaries` 额外负责 CPU 库下载。`--no-default-features --features ort-load-dynamic` 改为加载自备共享库，不带下载器或 TLS/OpenSSL 构建依赖。`ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack` 转发到 `anr` 的 ORT provider，需要对应平台、库和驱动；选择 feature 不会安装它们。这些 feature 与原生 `cuda`、`tensorrt` 不同。
-
-例如，在 Windows 编入 DirectML 后选择 `--provider directml`，在 macOS 编入 CoreML 后选择 `--provider coreml`。默认仍为 `cpu`。项目正常允许 ORT 在 CUDA、TensorRT、DirectML、CoreML 之外，将不支持或按自身分配规则更适合 CPU 的算子交给 CPU。这是默认策略，不是临时选项；选择 GPU provider 不代表所有算子都在 GPU 上执行。明确指定的 provider 注册或初始化失败仍报错，不会把不可用的 provider 静默换成 CPU。XNNPACK 本身是 CPU provider，也允许普通 CPU kernel 执行算子。`backends --json` 中，`compiled` 只表示编译时加入了支持；`runtime_available: null` 表示尚未检查运行时可用性，不代表模型成功运行。
-
-ORT 的 CUDA/TensorRT provider 会在创建各个 Session 前自动准备内存中的模型，与 benchmark 共用 `anr-ort` 加载入口。不需要额外参数、手动生成转换模型或安装 Python；原 ONNX 和权重不变，衰减量仍可调整。CPU、DirectML 及原生后端保留原有加载方式。
-
-
-动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
-
-可选 `gl`、`gles`、`vk`、`wgpu`、`dx`、`cuda`、`tensorrt`、`openvino`、`opencl` features 启用原生后端，不会启用 ONNX Runtime。用 `--no-default-features` 去掉 ORT，再选择环境支持的 features。即使没有编入 ORT，`--backend` 默认值仍是 `ort`，因此 native-only 构建必须明确指定后端；不能传 `--provider`，包括 `--provider cpu`。
-
-从源码运行 GLES-only 版本时，使用 Cargo 直接执行刚构建的程序，避免调用 `PATH` 中旧的 `anr`：
-
-```text
+cargo build -p anr-cli --no-default-features
 cargo run -p anr-cli --release --no-default-features --features gles -- denoise input.wav --model /path/to/dfn3.onnx --backend gles --output clean.wav
 ```
 
-GL/GLES/Vulkan/wgpu/D3D12 都只将原 ONNX 用作参数容器，不执行通用 ONNX 图。固定模型 SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`，即使端口大小一致，其他导出版本也会拒绝。通过 `anr-dfn3` 共用固定执行顺序和 WGSL 算子，FFT、神经网络及音频合成都在 GPU 执行；保留 48 kHz / 480 采样分帧、CLI 重采样、声道独立状态、strength、reset 和精确输出长度。强度为零保留原衰减分支，不表示原音旁路。
+无 feature 构建可检查音频、列出后端，但不能降噪。原生 features 不启用 ORT；用 `--no-default-features` 排除 ORT。native-only 构建必须明确传 `--backend`，参数默认值仍是 `ort`。
 
-`gles` 需要 Windows/WGL 或 Linux 硬件 EGL/pbuffer 创建真实 ES 3.1+ context，复用 `anr-gl` 执行器，生成 GLSL ES 310；在 fence 完成后映射输出帧，不调用桌面专用 `glGetBufferSubData`，也不接受桌面 GL 的 ES 兼容模式。本后端未提供 Android、WebGL 或 macOS context 创建。
-
-`gl` 需要 Windows 桌面 GL 4.3 或 Linux 硬件 EGL 的桌面 GL 4.3/pbuffer；`vk` 需要 Windows/Linux 硬件 Vulkan 1.1；`wgpu` 在 Windows/Linux/macOS 使用原生硬件 Vulkan/DX12/Metal adapter；`dx` 使用 Windows 硬件 D3D12 与系统 D3DCompiler 47。原生 VK/DX 不经 wgpu，DX 不是 DirectML。不静默选择 CPU 或软件渲染；硬件不支持或初始化失败会报错。macOS GPU 路径尚未验证。
-
-原生后端不能传 `--provider`，包括 `--provider cpu`。`backends --json` 列出十个名称，但不加载运行库或创建 GPU device；原生项没有 ORT provider，`runtime_available` 保持 `null`，只表示没有探测可用性，不代表运行库或设备已就绪。verbose 日志显示所选 backend，仅 ORT 显示 provider。
-
-真实模型 CLI 测试需主动启用：将 `ANR_DFN3_MODEL` 指向模型，执行 `cargo test -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx --test cli compute_ -- --include-ignored`，按机器支持情况选择 features。测试覆盖 raw/WAV、立体声独立状态、非整帧长度、批处理重置和 strength。每个启用的 Compute 后端都需要真实硬件，不能把 ignored 当作硬件测试通过。
-
-### 原生 CUDA、TensorRT、OpenVINO 和 OpenCL 部署
-
-四种新增后端均需主动启用，并使用前述固定 SHA-256 模型，保留 CLI 重采样、声道独立状态、strength、reset、尾帧处理和精确输出长度。CUDA 和 OpenCL 在 GPU 执行完整固定 FP32 DSP/FFT/神经网络计划；CUDA 使用 Driver/NVRTC 与 replay graph，OpenCL 要求 OpenCL 1.2+ 硬件 GPU ICD，不接受 CPU 实现。TensorRT 使用两个真实 standard-layer 神经网络 engine 与 CUDA DSP/FFT graph，强类型 FP32、禁用 TF32，不经 ORT、ONNX parser 或推理 plugin。目前没有持久 engine cache；已记录的一次初始化为 17.342 秒，不能承诺快速冷启动。
-
-OpenVINO 通过原生 Runtime 直接导入原 ONNX，将循环状态转为 stateful，每条流使用独立 InferRequest。默认明确使用 CPU，不选 AUTO/HETERO。`--openvino-device GPU`、`GPU.0` 或 `NPU` 只请求对应设备；设备缺失、算子不支持均报错，不静默回退 CPU。NPU 运算精度取决于设备，不能因模型为 FP32 就宣称 NPU 全程 FP32。
-
-CUDA/OpenCL 的 Rust crate 不需要构建时 vendor SDK，但运行仍需兼容库与驱动。TensorRT/OpenVINO 构建需要现有 SDK 和 C++17 编译器，`build.rs` 编译私有 shared shim，Rust 通过 `libloading` 加载；不会系统安装或自动下载 SDK。
-
-```text
-cargo build -p anr-cli --release --no-default-features --features cuda,opencl
-cargo run -p anr-cli --release --no-default-features --features cuda -- denoise input.wav --model /path/to/dfn3.onnx --backend cuda --output clean.wav
-```
-
-启用 SDK 后端前，在构建环境配置真实 SDK 路径。PowerShell 示例（须替换路径）：
+SDK 构建前先配置真实路径（PowerShell 示例）：
 
 ```powershell
 $env:TENSORRT_ROOT = "C:\sdk\TensorRT"
@@ -492,44 +425,19 @@ $env:OPENVINO_ROOT = "C:\sdk\openvino"
 cargo build -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl
 ```
 
-TensorRT 需要 `TENSORRT_ROOT`、`CUDA_ROOT`（或 `CUDA_PATH`）下的 headers 和链接库，可用 `TENSORRT_LIB_DIR`、`CUDA_LIB_DIR` 覆盖链接库目录。OpenVINO 支持 `OPENVINO_ROOT` 或指向 SDK CMake 布局的 `OpenVINO_DIR`；官方 wheel 中含 `include/`、`libs/` 的 `openvino` 目录也可作为 SDK，Python 不是产品运行依赖。
+TensorRT 可用 `CUDA_PATH` 代替 `CUDA_ROOT`，并以 `TENSORRT_LIB_DIR` / `CUDA_LIB_DIR` 覆盖链接库目录。OpenVINO 还接受 SDK/CMake 布局内的 `OpenVINO_DIR`，或官方 wheel 中含 `include/`、`libs/` 的 `openvino` 目录；生成的 CLI 不依赖 Python 运行。
 
-构建后分别使用 `--backend tensorrt`、`--backend opencl` 或 `--backend openvino --openvino-device CPU`。相对地，ORT CUDA 使用 `ort-cuda` feature 和 `--backend ort --provider cuda`；ORT TensorRT 使用 `ort-tensorrt` 和 `--backend ort --provider tensorrt`。原生后端不继承 ORT 的算子级 CPU 分配策略。
+自行部署时：
 
-自行分发应用时，除模型和通知外，还需部署以下依赖，不能依赖构建机器记录的绝对路径：
+- CUDA 在 Windows 加载 `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`，Linux 加载 `libnvrtc.so.13` / `.12` / 无版本名库。匹配的 NVRTC/builtins 应在 `PATH` 或 `LD_LIBRARY_PATH`；仅有 Driver API 12.0 不保证兼容 NVRTC 13 PTX。
+- TensorRT 需要构建 `OUT_DIR/anr_tensorrt_native.dll`（Linux 为 `libanr_tensorrt_native.so`）。`ANR_TENSORRT_SHIM` 指 shim 文件。仅 Windows 上 `ANR_TENSORRT_RUNTIME` 接受 TensorRT 库文件或 DLL 目录；Linux 忽略此变量，需通过平台 loader 路径（如 rpath 或 `LD_LIBRARY_PATH`）使库可加载。还需兼容 TensorRT/CUDA 库。目前没有持久 engine cache，构建 engine 会影响冷启动。
+- OpenVINO 需要 `OUT_DIR` 中的 `anr_openvino_native.dll`（`libanr_openvino_native.so` / `.dylib`）。`ANR_OPENVINO_SHIM` 指 shim 文件，`ANR_OPENVINO_RUNTIME` 指 Runtime 库**文件**而非目录；保留 runtime/frontend/plugin 布局并配置平台库搜索路径。
+- shim 放在可执行文件旁或设置覆盖路径。Cargo 安装不收集私有 shim 或厂商库，不能依赖另一构建机器记录的 SDK 路径。
+- Windows TensorRT 按实际导入 DLL 名依次搜索 shim 目录、可执行文件目录、现存绝对 `PATH` 目录和构建时 SDK 目录，并去重。显式 `ANR_TENSORRT_RUNTIME`、`CUDA_ROOT` / `CUDA_PATH` 优先，配置错误直接失败，不改选其他安装。空/相对 `PATH` 不启用当前目录搜索，loader 不改写 `PATH`。
+- ORT 共享链接除 `ORT_LIB_LOCATION` 外可能需要 `ORT_PREFER_DYNAMIC_LINK=1` 和平台库搜索路径。动态库加载失败在创建输出前返回 1。
 
-| 后端 | 运行时部署要求 |
-| --- | --- |
-| CUDA | NVIDIA Driver API 12.0+，NVRTC major 12 或 13（优先 13），驱动还须能加载所选 NVRTC 产生的 PTX；仅支持 Driver API 12.0 不代表兼容 NVRTC 13 PTX。Windows 加载 `nvrtc64_130_0.dll` / `nvrtc64_120_0.dll`，Linux 加载 `libnvrtc.so.13` / `.12` / 无版本名库。将匹配的 NVRTC/builtins 库目录加入 Windows `PATH` 或 Linux `LD_LIBRARY_PATH`。 |
-| TensorRT | Cargo 构建 `OUT_DIR` 中的 `anr_tensorrt_native.dll`（Linux 为 `libanr_tensorrt_native.so`），以及兼容 TensorRT/CUDA 运行库、驱动。`ANR_TENSORRT_SHIM` 覆盖 shim **文件**；`ANR_TENSORRT_RUNTIME` 可设为 TensorRT DLL 目录或库文件。还需配置 vendor 库搜索路径，包括 NVRTC/builtins。 |
-| OpenVINO | `OUT_DIR` 中的 `anr_openvino_native.dll`（`libanr_openvino_native.so` / `.dylib`），以及匹配的 OpenVINO Runtime、ONNX frontend、所选设备 plugin 及其依赖。`ANR_OPENVINO_SHIM` 覆盖 shim **文件**；`ANR_OPENVINO_RUNTIME` 指向 Runtime 库**文件**，不是目录。保留 vendor runtime/plugin 布局并配置平台库搜索路径。 |
-| OpenCL | 系统 OpenCL ICD loader，以及支持 OpenCL 1.2+ 的厂商硬件 GPU ICD/runtime/driver。只有 loader 不等于拥有 GPU 实现。 |
+硬件测试需主动启用：设置 `ANR_DFN3_MODEL`，使用 `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`，只选本机支持的 features；SDK 后端在配置对应 SDK 后再加入。测试覆盖流/文件行为，不代表感知音质或所有设备兼容性。性能记录单列于 [benchmark.md](../../benchmark.md)。
 
-Windows 上，TensorRT loader 按 shim 实际导入的 DLL 名，默认依次搜索 shim 所在目录、executable 所在目录、`PATH` 中存在的绝对目录，最后查构建时 SDK 目录，各阶段去重。空/相对 `PATH` 项不会启用当前工作目录搜索。显式设置的 `ANR_TENSORRT_RUNTIME` 和 `CUDA_ROOT` / `CUDA_PATH` 始终优先，必须提供各自对应的运行库；覆盖路径无效会报错，不会改选其他目录或已安装版本。loader 不改写进程 `PATH`。
+### 许可
 
-shim 应放在 executable 旁或显式设置覆盖路径。只复制 `anr` 不足以部署这些依赖，Cargo 安装也不会自动收集私有 shim 或 vendor 库。再分发权限须按 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 中各厂商条款核实；项目许可不授予任意驱动/SDK 的再分发权。默认 Release ZIP 仍为 CPU ORT 包，不附带这些 SDK 或原生运行库。
-
-配置 SDK、运行库、硬件及 `ANR_DFN3_MODEL` 后，可执行 `cargo test -p anr-cli --release --no-default-features --features cuda,tensorrt,openvino,opencl --test cli compute_ -- --include-ignored` 验收真实 CLI，features 只选本机可用项。已记录 Windows x64 验收退出 0，10 passed、0 ignored，覆盖 raw/WAV、立体声独立状态、精确尾帧长度、strength 与批处理 reset。CUDA/TensorRT/OpenCL 使用 RTX 2080 Ti，OpenVINO 明确使用 AMD Ryzen 7 5800X CPU；SDK/runtime 版本为 CUDA 13.3、TensorRT 10.16.1、OpenVINO 2026.4.0。四后端另已通过流式 reference。OpenVINO GPU 在原图 `NonZero_1_count` / `count_nonzero` kernel 选择处编译失败，NPU 未测；不能据此宣称 Linux/macOS GPU、其他设备、音质或实时性能已验证。
-
-
-### 哪些已经测过
-
-CI 为 Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS arm64（`macos-15`）和 macOS x64（`macos-15-intel`）配置 Rust stable 检查。SDK-free 工作区检查排除 `anr-tensorrt`、`anr-openvino`，使用明确 feature 组合，避免 `--all-features` 意外编入 SDK 后端。工作流覆盖普通测试、CPU ORT 真实模型测试、无后端和 native-only 非 GPU CLI 测试、lint/编译/文档检查及解压 ZIP 后的 CPU 推理；SDK 构建和原生硬件测试须在另行配置的环境验收。这是配置说明，不是 hosted job 已通过的证据。runner 标签来源见 [GitHub 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
-
-自制 ONNX 控制图只验证处理、状态和音频流格式，不是 DFN3 权重，也不证明真实模型音质。真实模型、压缩格式变体、可选 provider 及最低 OS/运行库要求，需要分别记录实际结果。Linux GNU 构建不代表支持 musl 或任意旧 glibc。本工具不提供实时音频设备、虚拟麦克风、驱动或云服务。
-
-以下本地记录使用 Rust 1.99，只说明验收环境，不表示固定 MSRV：
-
-| 环境 | 已执行的检查 | 不能据此确定的事项 |
-| --- | --- | --- |
-| Windows x64 / RTX 2080 Ti | ORT 真实模型；GL/GLES/Vulkan/wgpu/D3D12 的独立 61 帧数值基准；CLI raw/WAV、立体声独立状态、尾帧长度、strength 和批处理 reset。 | 其他 GPU 的行为、音质改善或实时性能。 |
-| WSL Ubuntu 24.04 x64 | ORT 推理与 CPU ZIP smoke；Compute-only 编译和非 GPU 测试，包含 GLES-only 测试及 Clippy。 | Linux GPU 执行，以及其他发行版/libc 的兼容性。 |
-| macOS arm64/x64 | 仅配置原生 runner 工作流。 | 本地原生运行、打包/签名或 GPU 结果。 |
-
-此前安装后验收覆盖无关工作目录、模型/运行库重定位、raw 和未知长度 WAV stdin、提前关闭 stdout、取消以及文件别名保护。这些是已记录的覆盖范围，不是当前测试数量保证。真实 minimal runtime、ORT GPU/NPU provider 及 hosted CI jobs 仍未在本地验证。
-
-### 许可与再分发
-
-项目代码采用 **MIT OR Apache-2.0**，任选其一；见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。在独立源码包内附带两份完整文本是本项目的分发选择，不是 Cargo 的强制要求。
-
-依赖和权重保留各自的许可。本项目提供的模型资产及对应清单已由维护者授权按 **MIT OR Apache-2.0** 分发，ZIP 内有 `models/LICENSE-MIT`、`models/LICENSE-APACHE` 和 `models/NOTICE.md`；不能将这一授权泛化到其他模型。Symphonia 与 ORT 适配器使用的 `onnx-protobuf` 为 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及可选 provider 另有条款。源码获取、修改及二进制分发义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+项目代码采用 **MIT OR Apache-2.0**：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。所提供模型的来源和授权见[模型通知](../../.github/models/NOTICE.md)。依赖、运行库、模型和 SDK 保留各自条款；再分发及源码提供义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
