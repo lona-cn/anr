@@ -1,0 +1,20 @@
+[package]
+name = "anr-lite"
+description = "Trainable ANR-Lite-48 speech enhancement architecture in Burn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "../../README.md"
+repository = "https://github.com/lona-cn/anr"
+
+[features]
+default = ["flex"]
+flex = ["burn/flex"]
+wgpu = ["burn/wgpu"]
+
+[dependencies]
+burn = { version = "=0.22.1", default-features = false, features = ["std", "autodiff", "signal"] }
+
+[[example]]
+name = "smoke"
+required-features = ["flex"]

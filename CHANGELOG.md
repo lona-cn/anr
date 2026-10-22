@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 新增独立的 `anr-lite`，使用 Burn 0.22.1 实现 ANR-Lite-48：64-band ERB／96-bin 低频双分辨率编码器、两层 128 维四分组 GRU 与跨组混合、全带增益和五 tap 复数残差输出。默认使用 CPU Flex，可选 wgpu；不修改现有 DFN3 推理后端或 CLI。
+- `anr-lite` 提供可微 960 点混合基 FFT、稀疏 ERB 特征、因果归一化、显式流式状态、overlap-add、尾帧补零与 flush；整段入口补偿 1440 samples 的流式延迟。支持批处理、跨帧梯度、显式 detach 和 Burn Module records。
+- 新增未训练模型的合成音频 smoke 示例及数值／梯度回归；不启动训练、不下载数据集、不提供预训练权重，不以随机初始化输出宣称降噪质量或性能优势。
 - `anr` 和 CLI 默认启用 `download-models`、`copy-models`：构建时从固定 GitHub Release 下载 DFN3，校验 SHA-256 并持久缓存，独立控制向 profile、examples、tests 构建目录复制模型；可用构建环境变量 `ANR_MODEL_PATH` 选择本地文件，关闭 defaults 则不引入模型下载器依赖。
 - 新增 `anr::default_model_path()`，先查找可执行文件旁的 `models/dfn3.onnx`，再使用构建时记录的源路径。CLI 的 `--model` 改为可选，显式路径优先；自动选择的模型同样受输出覆盖保护。raw 示例也支持省略模型路径，运行时不下载模型。
 - 新增工作区工具 `anr-bench`，串行比较 `anr-gl`、`anr-vk`、`anr-dx` 的连续帧推理性能；共用固定种子的 48 kHz 单声道输入，初始化单独计时，支持预热、后端选择、降噪强度和 JSON。报告同步调用延迟、nearest-rank P50/P95/P99、FPS、RTF 及超过 10 ms 的帧数；任一后端失败仍继续测试其余后端，并返回非零退出码。默认构建不依赖 ORT，不改动原生推理实现，也不加入应用 Release ZIP。

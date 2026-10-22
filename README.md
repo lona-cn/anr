@@ -237,6 +237,38 @@ The table reports initialization, min/mean/max synchronous call latency, nearest
 
 `--json` writes configuration, input seed, platform/build information, effective backend strength, timings, and `results[].status` (`ok` or `error`) to stdout; progress and debug-build warnings go to stderr. Successful results include `cpu_fallback_allowed`: true for ORT and false for native compute. It describes the execution policy, not an operator count or a claim that all work ran on GPU. Strength follows the backend's existing attenuation rounding. A backend failure does not prevent later backends from running, but any failure produces exit code 1; invalid arguments produce exit code 2. Provider registration errors do not silently replace the requested provider with CPU. Device selection remains each crate's own default, so multiple-GPU machines must not assume every API chose the same adapter. Synthetic-input results are not sound-quality or representative-recording measurements.
 
+### Develop ANR-Lite-48 with Burn
+
+`anr-lite` is a separate Burn 0.22.1 model crate for **48 kHz, mono speech**. It implements the ANR-Lite-48 architecture, but includes **no pretrained weights, dataset loader, or training loop**. Random initialization is not a usable denoising model. It is not selected by the CLI and does not replace the hash-locked DFN3 export.
+
+The network combines 64-band ERB envelope features with 96-bin complex low-frequency features. Both encoders use 16 channels; the shared temporal core has two 128-dimensional GRUs with four groups and dense inter-group mixing. The two heads predict full-band gains and five-tap complex residual filters. The residual head starts at zero. Batch normalization uses Burn's `train()` / `valid()` modes.
+
+```sh
+cargo run -p anr-lite --locked --example smoke
+cargo run -p anr-lite --locked --features wgpu --example smoke -- --wgpu
+cargo test -p anr-lite --locked --all-targets
+```
+
+The default `flex` feature enables Burn's CPU backend. The optional `wgpu` feature enables an explicitly selected discrete GPU; `--wgpu` does not silently switch to CPU. The smoke example generates its own signal, reports the untrained status, compares whole-waveform processing with streaming plus flush, and checks finite, nonzero input gradients without an optimizer update. Its first-call timing is not a steady-state benchmark or a sound-quality measurement.
+
+```rust,no_run
+use anr_lite::{AnrLite48, AudioProcessor};
+use anr_lite::burn::{module::Module, tensor::{Device, Tensor}};
+
+let device = Device::flex();
+let model = AnrLite48::new(&device).valid();
+let processor = AudioProcessor::new(&device);
+// Replace with your own [batch, samples] f32 audio at 48 kHz.
+let input = Tensor::<2>::zeros([1, 960], &device);
+let output = processor.forward(&model, input);
+```
+
+`AudioProcessor::forward` starts a new batch of streams, pads the final hop, flushes, compensates the known delay, and returns the original sample count. For continuous audio, use `initial_state(batch)` and `forward_frame` with `[batch, 480]` tensors. Streaming returns delayed samples: `AUDIO_DELAY_SAMPLES = 1440` (30 ms), excluding collection of the current input block. At EOF, right-pad a partial hop and call `flush` once to emit the three delayed hops. Flush advances the stream; replacing its state starts a new recording.
+
+For future training, use an autodiff device and `model.train()`. Audio transforms, feature normalization, the network and spectral filtering retain their gradient graph across frames. Call `AudioState::detach()` or `ModelState::detach()` only at an intentional truncated-backpropagation boundary. Burn module records preserve model parameters and normalization state, not the live audio stream.
+
+The 960-point differentiable FFT combines native 64-point FFTs with a fixed radix-15 stage because Burn's native FFT only accepts powers of two. Sparse ERB mapping avoids a dense frequency-by-band matrix. Model and DSP activations stay on the chosen device; this implementation does not provide allocation-free audio callbacks, custom fused native shaders, or verified speed/quality improvements over DFN3.
+
 ### Which crate should I use?
 
 Use `anr` in most Rust applications, or install `anr-cli` to work with files. Backend crates separate each implementation from the common interface.
@@ -252,10 +284,11 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 | `anr-wgpu` | wgpu compute DFN3, without ORT. |
 | `anr-dx` | Native Windows Direct3D 12 compute DFN3, without ORT, DirectML, or wgpu. |
 | `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
+| `anr-lite` | Develop the untrained ANR-Lite-48 architecture in Burn, with differentiable streaming audio DSP, CPU and optional wgpu execution. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
 | `anr-bench` | Workspace-only streaming inference benchmark for native `gl`/`vk`/`dx` and optional ORT CUDA/TensorRT/DirectML, with table or JSON output; not included in application release ZIPs. |
 
-`anr-dfn3` and the five compute crates use this root README in their source packages. `anr-core`, `anr-ort`, the facade, and the CLI each have their own README. The compute constructor takes only a model path; an ORT environment or `Session` is never passed to it.
+`anr-dfn3`, `anr-lite` and the five compute crates use this root README in their source packages. `anr-core`, `anr-ort`, the facade, and the CLI each have their own README. The compute constructor takes only a model path; an ORT environment or `Session` is never passed to it.
 
 `NoiseReduction` works as `Box<dyn NoiseReduction>`, and reducers can be moved between threads (`Send`). The library crates do not manage audio devices, decode WAV, resample, or split multiple channels. The CLI handles file decoding, resampling, and channels outside the library. Automatic model preparation is provided by the `anr` facade, not the individual backend crates.
 
@@ -514,6 +547,38 @@ cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --feature
 
 `--json` 将配置、输入种子、平台/构建信息、后端实际强度、耗时及 `results[].status`（`ok` 或 `error`）写入 stdout，进度与 debug 构建警告写入 stderr。成功结果的 `cpu_fallback_allowed` 在 ORT 下为 true、原生 Compute 下为 false，只说明执行策略，不统计算子数量，也不表示所有工作都在 GPU 上完成。强度沿用后端现有的衰减量取整规则。某个后端失败仍继续测试后续后端，但最终退出码为 1；参数错误返回 2。provider 注册失败不会静默换成 CPU。设备仍由各 crate 按现有规则选择，多 GPU 机器不能假定三种 API 选中了同一块卡。合成输入结果不代表音质或真实录音的性能。
 
+### 使用 Burn 开发 ANR-Lite-48
+
+`anr-lite` 是独立的 Burn 0.22.1 模型库，输入为 **48 kHz 单声道语音**。目前已实现网络和音频处理，但**没有预训练权重、数据加载器或训练循环**。随机初始化模型不能直接用于有效降噪；CLI 不会选择它，也不会用它替换固定 SHA-256 的 DFN3 模型。
+
+网络分别处理 64-band ERB 包络与最低 96 个频点的复数细节，编码器均为 16 通道；共享时序网络包含两层 128 维、四分组 GRU，每层后进行跨组混合。两个输出头分别预测全带增益和五 tap 复数残差滤波系数，残差头以零初始化。BatchNorm 沿用 Burn 的 `train()` / `valid()` 模式。
+
+```sh
+cargo run -p anr-lite --locked --example smoke
+cargo run -p anr-lite --locked --features wgpu --example smoke -- --wgpu
+cargo test -p anr-lite --locked --all-targets
+```
+
+默认 `flex` feature 使用 Burn CPU 后端；可选 `wgpu` feature 允许明确选择独立 GPU，`--wgpu` 不会静默退回 CPU。示例自行生成音频，明确报告“尚未训练”，比较整段处理与逐帧加 flush 的结果，并检查输入梯度有限且非零，不执行优化器更新。输出的首次调用耗时不是稳态 benchmark，也不代表音质。
+
+```rust,no_run
+use anr_lite::{AnrLite48, AudioProcessor};
+use anr_lite::burn::{module::Module, tensor::{Device, Tensor}};
+
+let device = Device::flex();
+let model = AnrLite48::new(&device).valid();
+let processor = AudioProcessor::new(&device);
+// 换成自己的 [batch, samples]、48 kHz f32 音频。
+let input = Tensor::<2>::zeros([1, 960], &device);
+let output = processor.forward(&model, input);
+```
+
+`AudioProcessor::forward` 从新状态开始，处理尾帧补零、结束 flush 和已知延迟补偿，返回原始采样数。连续音频使用 `initial_state(batch)` 和接收 `[batch, 480]` 张量的 `forward_frame`。流式输出延迟为 `AUDIO_DELAY_SAMPLES = 1440`（30 ms），不包含收集当前输入帧的时间。结束时先补齐不足一帧的输入，再调用一次 `flush` 取出最后三个延迟帧；flush 会推进状态，开始另一段录音时应新建状态。
+
+后续训练使用启用 autodiff 的设备与 `model.train()`。音频变换、特征归一化、网络及频谱滤波保留跨帧计算图；仅在有意截断反向传播时调用 `AudioState::detach()` 或 `ModelState::detach()`。Burn Module record 保存模型参数和归一化状态，不保存正在处理的音频流状态。
+
+960 点可微 FFT 由原生 64 点 FFT 与固定 radix-15 阶段组合，因为 Burn 原生 FFT 只接受 2 的幂。稀疏 ERB 映射不构造稠密频率矩阵，模型与 DSP 激活不读回 CPU。本实现不是无分配音频 callback 或已融合的原生 shader，也没有证明比 DFN3 更快或音质更好。
+
 ### 各个包怎么选
 
 Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各后端包将具体实现与公共接口分开。
@@ -529,10 +594,11 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 | `anr-wgpu` | 使用 wgpu Compute DFN3，不依赖 ORT。 |
 | `anr-dx` | 使用原生 Windows Direct3D 12 Compute DFN3，不依赖 ORT、DirectML 或 wgpu。 |
 | `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
+| `anr-lite` | 使用 Burn 开发尚未训练的 ANR-Lite-48，包含可微流式音频处理、CPU 与可选 wgpu 执行。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
 | `anr-bench` | 工作区内的原生 `gl`/`vk`/`dx` 和可选 ORT CUDA/TensorRT/DirectML 连续帧推理 benchmark，输出表格或 JSON；不包含在应用 Release ZIP 中。 |
 
-`anr-dfn3` 和五个 Compute crate 在源码包中复用本根 README；`anr-core`、`anr-ort`、facade 和 CLI 各有独立 README。Compute 构造器只传模型路径，不接收 ORT 的环境或 `Session`。
+`anr-dfn3`、`anr-lite` 和五个 Compute crate 在源码包中复用本根 README；`anr-core`、`anr-ort`、facade 和 CLI 各有独立 README。Compute 构造器只传模型路径，不接收 ORT 的环境或 `Session`。
 
 `NoiseReduction` 支持 `Box<dyn NoiseReduction>`，降噪器也可以移交给另一个线程（`Send`）。库包不负责音频设备管理、WAV 解码、采样率转换或多声道拆分；CLI 在库外处理文件解码、重采样和多声道。自动模型准备由 `anr` 入口 crate 提供，不放进各个后端 crate。
 
