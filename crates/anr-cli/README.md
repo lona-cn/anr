@@ -180,6 +180,9 @@ With no features, the CLI can list compiled support and inspect audio but cannot
 
 For example, build with DirectML on Windows and select `--provider directml`, or build with CoreML on macOS and select `--provider coreml`. The default remains `cpu`. The project normally allows ORT to place individual operators on CPU alongside CUDA, TensorRT, DirectML, or CoreML when unsupported by that provider or preferred by ORT's placement rules. This is the default policy, not a temporary option; selecting a GPU provider does not promise GPU-only execution. Explicit provider registration or initialization failures remain errors and do not silently replace an unavailable provider with CPU. XNNPACK is itself a CPU provider and also allows ordinary CPU kernels. In `backends --json`, `compiled` means support was built in; `runtime_available: null` means runtime availability has not been checked, not that a model has run successfully.
 
+For CUDA/TensorRT, the CLI automatically prepares an in-memory model before creating each session, using the same `anr-ort` entry point as the benchmark. No extra flag, converted model file, or Python is required. The original ONNX and weights remain unchanged; attenuation stays adjustable. CPU/DirectML and native compute keep their existing loading paths.
+
+
 For a dynamic-loading build, set `ORT_DYLIB_PATH` before starting the program, pointing to an API-27-compatible shared library **file**, not a directory. Loading errors return exit code 1 before output is created. The CLI prepares one environment for the batch; library users own their environment explicitly. For shared linking, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK=1`, and configure the system's library search path too. Distribute the required libraries and notices; copying the executable alone is not enough for every configuration.
 
 The optional `gl`, `gles`, `vk`, `wgpu`, and `dx` features enable compute backends without enabling ONNX Runtime. Use `--no-default-features` to omit ORT, and enable any subset. The default `--backend` remains `ort` even if ORT was not compiled; a compute-only build must explicitly select its backend. It cannot be combined with `--provider`, including `--provider cpu`.
@@ -221,7 +224,7 @@ Earlier installed-release checks covered unrelated working directories, model/ru
 
 The project code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Including both full texts in each standalone source package is this project's distribution choice, not a Cargo requirement.
 
-Dependencies and model weights keep their own licenses. The supplied model asset and its matching manifest are explicitly **MIT OR Apache-2.0** as authorized by the maintainer; the ZIP includes `models/LICENSE-MIT`, `models/LICENSE-APACHE`, and `models/NOTICE.md`. This does not grant rights to unrelated model exports. Symphonia uses MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and optional providers have separate terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for source availability, modification, and binary redistribution obligations.
+Dependencies and model weights keep their own licenses. The supplied model asset and its matching manifest are explicitly **MIT OR Apache-2.0** as authorized by the maintainer; the ZIP includes `models/LICENSE-MIT`, `models/LICENSE-APACHE`, and `models/NOTICE.md`. This does not grant rights to unrelated model exports. Symphonia and the ORT adapter's `onnx-protobuf` use MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and optional providers have separate terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for source availability, modification, and binary redistribution obligations.
 
 ## 简体中文
 
@@ -401,6 +404,9 @@ cargo build -p anr-cli --no-default-features --features gl,gles,vk,wgpu,dx
 
 例如，在 Windows 编入 DirectML 后选择 `--provider directml`，在 macOS 编入 CoreML 后选择 `--provider coreml`。默认仍为 `cpu`。项目正常允许 ORT 在 CUDA、TensorRT、DirectML、CoreML 之外，将不支持或按自身分配规则更适合 CPU 的算子交给 CPU。这是默认策略，不是临时选项；选择 GPU provider 不代表所有算子都在 GPU 上执行。明确指定的 provider 注册或初始化失败仍报错，不会把不可用的 provider 静默换成 CPU。XNNPACK 本身是 CPU provider，也允许普通 CPU kernel 执行算子。`backends --json` 中，`compiled` 只表示编译时加入了支持；`runtime_available: null` 表示尚未检查运行时可用性，不代表模型成功运行。
 
+CUDA/TensorRT 会在创建各个 Session 前自动准备内存中的模型，与 benchmark 共用 `anr-ort` 加载入口。不需要额外参数、手动生成转换模型或安装 Python；原 ONNX 和权重不变，衰减量仍可调整。CPU、DirectML 及原生 Compute 保留原有加载方式。
+
+
 动态构建需在启动前将 `ORT_DYLIB_PATH` 指向兼容 API 27 的共享库**文件**，不是目录；加载失败在创建输出前正常返回退出码 1。CLI 为整批文件准备一个环境，库使用者则显式持有环境。共享链接可配置 `ORT_LIB_LOCATION`、`ORT_PREFER_DYNAMIC_LINK=1` 和系统库搜索路径。分发时提供必需运行库及通知，不能认为所有构建方式都只需复制可执行文件。
 
 可选 `gl`、`gles`、`vk`、`wgpu`、`dx` features 启用 Compute 后端，不会启用 ONNX Runtime。用 `--no-default-features` 去掉 ORT，再选择需要的 features。即使没有编入 ORT，`--backend` 默认值仍是 `ort`，因此 Compute-only 构建必须明确指定后端；不能传 `--provider`，包括 `--provider cpu`。
@@ -442,4 +448,4 @@ CI 为 Windows x64（`windows-2025`）、Linux x64（`ubuntu-24.04`）、macOS a
 
 项目代码采用 **MIT OR Apache-2.0**，任选其一；见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。在独立源码包内附带两份完整文本是本项目的分发选择，不是 Cargo 的强制要求。
 
-依赖和权重保留各自的许可。本项目提供的模型资产及对应清单已由维护者授权按 **MIT OR Apache-2.0** 分发，ZIP 内有 `models/LICENSE-MIT`、`models/LICENSE-APACHE` 和 `models/NOTICE.md`；不能将这一授权泛化到其他模型。Symphonia 为 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及可选 provider 另有条款。源码获取、修改及二进制分发义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+依赖和权重保留各自的许可。本项目提供的模型资产及对应清单已由维护者授权按 **MIT OR Apache-2.0** 分发，ZIP 内有 `models/LICENSE-MIT`、`models/LICENSE-APACHE` 和 `models/NOTICE.md`；不能将这一授权泛化到其他模型。Symphonia 与 ORT 适配器使用的 `onnx-protobuf` 为 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及可选 provider 另有条款。源码获取、修改及二进制分发义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

@@ -101,9 +101,14 @@ Before building an environment, call `anr_ort::initialize_runtime()` to load `OR
 
 `cuda`, `tensorrt`, `directml`, `coreml`, and `xnnpack` compile support for the corresponding libraries. They do not select a device or install drivers or other required libraries.
 
-`DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, use `anr_ort::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
+`DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, uses one intra-op thread, and disables spinning, environment EP lists, and automatic accelerator selection. It does not require device discovery in minimal builds. For another provider, configure a `SessionBuilder`, call `anr_ort::session_from_file(builder, path, &providers)`, then pass the returned session to `DFN3::new(session)`.
 
 GPU sessions normally retain ORT's per-operator CPU placement: unsupported or CPU-preferred operators may run on CPU alongside the selected GPU provider. `DFN3::new(session)` preserves the session's settings rather than requiring GPU-only execution. The CLI and benchmark use this as their default policy while treating explicit provider registration failures as errors.
+
+`session_from_file` registers the supplied providers with registration errors enabled and preserves the builder's other settings. Before CUDA/TensorRT session creation, it reads the model and prepares an in-memory copy: sigmoid `FusedConv` is expanded into standard operators; TensorRT also lowers statically indexed state sequences to `Split` and eligible fixed-shape, pure tensor conditionals to `Where`. Dynamic conditions and attenuation remain live. Patterns whose eager execution cannot be proven safe remain unchanged and may still be unsupported by the provider.
+
+Preparation runs once per new session, not once per audio frame. The source file and weights are not rewritten; no derived ONNX file or disk cache is created. CPU, DirectML, and other providers keep file loading without these rewrites. Relative external weights resolve beside the source model unless the builder explicitly specifies another directory. For an already-owned byte buffer, use `prepare_model(bytes, ModelTarget::Cuda)` or `ModelTarget::TensorRT`, then `commit_from_memory` on your configured builder. `prepare_model` does not select a provider; direct upstream `commit_from_file` bypasses preparation, and `DFN3::new` cannot repair an already-created session.
+
 
 In the facade, `ort-directml` compiles support for ORT's DirectML provider; `dx` exposes the separate native D3D12 implementation. Similarly, `gl`, `gles`, `vk`, and `wgpu` are features of the facade, not features of `anr-ort`. Use [`anr-cli`](../anr-cli/README.md) for file decoding, resampling, per-channel processing, and explicit backend/provider selection.
 
@@ -112,6 +117,9 @@ In the facade, `ort-directml` compiles support for ORT's DirectML provider; `dx`
 The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
 Check model weights and ONNX files separately for use and redistribution rights. The DeepFilterNet source being dual-licensed does not mean every model from every source has the same license. The Rust `ort` crate, ONNX Runtime, and execution-provider libraries also have their own license and distribution requirements.
+
+ONNX messages are decoded with unmodified `onnx-protobuf` 0.2.3 (MPL-2.0), using `protobuf` 3.4.0 (MIT). Source availability and distribution requirements are documented in the [CLI third-party notices](../anr-cli/THIRD-PARTY-NOTICES.md).
+
 
 ## 简体中文
 
@@ -212,9 +220,14 @@ anr-ort = { version = "0.1.1", default-features = false, features = ["load-dynam
 
 `cuda`、`tensorrt`、`directml`、`coreml`、`xnnpack` 编入对应库的支持，不会自动选择设备，也不会安装驱动或其他必需的库。
 
-`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，用 `anr_ort::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，单线程执行算子，禁用忙等待、环境 EP 列表和自动加速器选择；minimal 构建不需要设备发现 API。若要选其他 provider，先配置 `SessionBuilder`，调用 `anr_ort::session_from_file(builder, path, &providers)`，再将返回的 Session 传给 `DFN3::new(session)`。
 
 GPU Session 默认保留 ORT 按算子分配到 CPU 的行为，不支持或更适合 CPU 的算子可以与所选 GPU provider 混合执行。`DFN3::new(session)` 保留 Session 设置，不要求全部算子都在 GPU 上运行。CLI 和 benchmark 使用这一默认策略，但显式 provider 注册失败仍报错。
+
+`session_from_file` 注册传入的 provider，注册失败即报错，其余 builder 设置保持不变。CUDA/TensorRT 创建 Session 前会读取模型，在内存中做等价转换：展开 sigmoid `FusedConv`；TensorRT 另将常量索引的状态序列拆分改为 `Split`，将符合条件的固定形状、纯张量分支改为 `Where`。条件和衰减量仍可动态变化。不能证明提前执行安全的模式保持原样，provider 仍可能不支持它们。
+
+每次创建新 Session 时准备一次模型，不在每帧推理中转换；不改写原模型或权重，不生成派生 ONNX 文件或磁盘缓存。CPU、DirectML 及其他 provider 保留原始文件加载。外部权重的相对路径默认以源模型目录解析，但不会覆盖 builder 明确配置的目录。已有模型字节时，可调用 `prepare_model(bytes, ModelTarget::Cuda)` 或 `ModelTarget::TensorRT`，再用已配置的 builder 调用 `commit_from_memory`。`prepare_model` 不选择 provider；直接调用上游 `commit_from_file` 会绕过转换，`DFN3::new` 也不能补救已创建的 Session。
+
 
 facade 的 `ort-directml` 编入 ORT DirectML provider 支持，`dx` 提供另一套原生 D3D12 实现。`gl`、`gles`、`vk`、`wgpu` 同样属于 facade，不是 `anr-ort` 的 features。文件解码、重采样、按声道处理及明确的后端/provider 选择，见 [`anr-cli`](../anr-cli/README.md)。
 
@@ -223,3 +236,5 @@ facade 的 `ort-directml` 编入 ORT DirectML provider 支持，`dx` 提供另�
 代码采用 **MIT OR Apache-2.0**，使用时任选其一。完整文本见 [LICENSE-MIT](LICENSE-MIT) 和 [LICENSE-APACHE](LICENSE-APACHE)。
 
 模型权重和 ONNX 文件需要单独确认使用与分发权限。DeepFilterNet 源码采用双许可，不代表任何来源的模型都具有相同许可。Rust `ort` 包、ONNX Runtime 及执行 provider 所依赖的库，也各有自己的许可和分发要求。
+
+ONNX 消息使用未修改的 `onnx-protobuf` 0.2.3（MPL-2.0）解析，运行库为 `protobuf` 3.4.0（MIT）。源码获取和分发要求见 [CLI 第三方说明](../anr-cli/THIRD-PARTY-NOTICES.md)。

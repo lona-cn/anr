@@ -268,24 +268,27 @@ fn load_ort_model(
         anr::ort::DFN3::from_file(environment, model)
             .with_context(|| format!("无法加载模型 {}", model.display()))?
     } else {
-        let session = (|| -> anr::ort::Result<anr::ort::session::Session> {
-            let mut builder = anr::ort::session::Session::builder(environment)?
-                .with_no_environment_execution_providers()?
-                .with_independent_thread_pool()?
-                .with_intra_threads(1)?
-                .with_intra_op_spinning(false)?
-                .with_inter_op_spinning(false)?
-                .with_parallel_execution(false)?;
+        let session = (|| -> anr::Result<anr::ort::session::Session> {
+            let mut builder = (|| -> anr::ort::Result<_> {
+                Ok(anr::ort::session::Session::builder(environment)?
+                    .with_no_environment_execution_providers()?
+                    .with_independent_thread_pool()?
+                    .with_intra_threads(1)?
+                    .with_intra_op_spinning(false)?
+                    .with_inter_op_spinning(false)?
+                    .with_parallel_execution(false)?)
+            })()
+            .map_err(anr::Error::backend)?;
             if provider == Provider::Directml {
-                builder = builder.with_memory_pattern(false)?;
+                builder = builder
+                    .with_memory_pattern(false)
+                    .map_err(|error| anr::Error::backend(anr::ort::Error::<()>::from(error)))?;
             }
             // Keep ORT's per-operator CPU placement for unsupported or preferred ops.
             // A requested provider must still register successfully.
-            builder
-                .with_execution_providers([dispatch(provider)
-                    .map_err(|e| anr::ort::Error::new(e.to_string()))?
-                    .error_on_failure()])?
-                .commit_from_file(model)
+            let provider = dispatch(provider)
+                .map_err(|error| anr::Error::backend(anr::ort::Error::new(error.to_string())))?;
+            anr::ort::session_from_file(builder, model, &[provider])
         })()
         .with_context(|| {
             format!(

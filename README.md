@@ -162,7 +162,7 @@ Adding `anr` alone does not enable model execution. Choose the Cargo features yo
 
 The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. Its default prebuilt runtime is 1.31.0; compatible self-provided API-27 runtimes, including 1.28.0, can also be used. Set `ORT_DYLIB_PATH` before initialization; it points to a library file, not a directory.
 
-Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, use `anr::ort::session::Session::builder(&environment)` and pass the resulting session to `DFN3::new(session)`.
+Call `anr::ort::initialize_runtime()` before building an environment so dynamic-library errors are returned normally. It loads the library but does not create or configure an environment. Build one `Environment` in your application and share it between denoisers. `DFN3::from_file(&environment, path)` explicitly uses the built-in CPU provider, one intra-op thread, and no thread-pool spinning. GPU features do not select a GPU or install drivers. For a custom provider, configure a `SessionBuilder`, call `anr::ort::session_from_file(builder, path, &providers)`, then pass the session to `DFN3::new(session)`.
 
 The project's default ORT policy allows per-operator CPU execution alongside a GPU provider. CLI and benchmark keep ORT's normal placement rules for unsupported or CPU-preferred operators; this is not a temporary benchmark option. `DFN3::new(session)` preserves the supplied session's policy. A requested provider must still register successfully: missing GPU libraries or provider initialization failures remain errors. Native GL/GLES/Vulkan/wgpu/D3D12 implementations are unchanged and do not gain a CPU executor.
 
@@ -229,7 +229,9 @@ For a supplied shared runtime, set `ORT_DYLIB_PATH` before launch, replace `ort-
 
 ORT uses one environment across all selected backends, including after a session fails. Each session explicitly registers only the requested provider with registration errors enabled, disables environment providers and thread-pool spinning, and uses sequential execution with one intra-op thread. DirectML also disables memory patterns. Normal ORT placement may run individual operators on CPU; TensorRT does not silently add CUDA as a second provider.
 
-**Current model compatibility:** with matching ORT 1.31 libraries on Windows / RTX 2080 Ti, the repository's DFN3 export runs with DirectML and normal CPU operator placement. CUDA rejects the `FusedConv(Sigmoid)` already present in the original model; disabling graph fusion cannot unfold it. TensorRT reports a missing intermediate shape for `/SequenceAt_11_output_0`. These two initialization failures remain errors, not performance numbers. All three ORT measurement paths also passed a separate self-authored control-graph smoke test. The opt-in hardware regression is `cargo test --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml --test ort -- --ignored`.
+**Model preparation:** CUDA/TensorRT use the shared `anr-ort` loader to rewrite an in-memory copy before session creation, without modifying the original ONNX or weights. CUDA expands the unsupported sigmoid `FusedConv`; TensorRT also replaces static `SplitToSequence`/`SequenceAt` state access with `Split` and safely lowers eligible tensor `If` branches to `Where`. CPU/DirectML and native compute retain their existing loading paths. Preparation is included in initialization, not repeated or timed per frame. Unsupported operators may still execute on CPU; TensorRT capability probing may print importer diagnostics for vendor fusions it cannot import. Actual initialization/inference errors still fail the backend.
+
+The supplied model has passed CUDA/TensorRT/DirectML comparisons against the original CPU graph on Windows / RTX 2080 Ti with matching ORT 1.31 libraries, including live attenuation changes, reset, and a partial frame. The opt-in numerical regression is `ANR_DFN3_MODEL=/absolute/path/dfn3.onnx cargo test --release --target-dir target/benchmark-ort-gpu -p anr-ort --features cuda,tensorrt,directml --test compat -- --ignored`; keep matching provider DLLs accessible beside the test executable in `release/deps` as well as the benchmark executable.
 
 Every backend receives the same one-second, fixed-seed mixture of 220 Hz / 880 Hz sine waves and noise, looped as a continuous 48 kHz mono stream in 480-sample frames. Input generation, model loading, shader compilation, warmup, result sorting, and reporting are outside the measured loop. Initialization is reported separately. Warmup state and input position are retained; there is no per-frame reset or benchmark-side allocation in the timed loop.
 
@@ -314,7 +316,7 @@ The code is **MIT OR Apache-2.0**; choose either. See [LICENSE-MIT](LICENSE-MIT)
 
 The supplied [model asset release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) is **MIT OR Apache-2.0**, as authorized by the maintainer for the exact SHA-256 in [its manifest](.github/models/dfn3.json); the ZIP carries the model's licenses and notice. Check other models separately: DeepFilterNet's source license does not establish rights for arbitrary exports or weights.
 
-The CLI's Symphonia decoder uses MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and execution-provider libraries have their own terms. See the [third-party notices](crates/anr-cli/THIRD-PARTY-NOTICES.md) for source, modification, and binary distribution obligations. The project's dual license does not replace those terms.
+The CLI's Symphonia decoder and the ORT adapter's `onnx-protobuf` message definitions use MPL-2.0; rubato, Rust `ort`, ONNX Runtime, and execution-provider libraries have their own terms. See the [third-party notices](crates/anr-cli/THIRD-PARTY-NOTICES.md) for source, modification, and binary distribution obligations. The project's dual license does not replace those terms.
 
 See [CHANGELOG.md](CHANGELOG.md) for version changes and [CI and Release](.github/workflows/ci.yml) for the maintained release procedure.
 
@@ -478,7 +480,7 @@ ORT 适配器只接受下表的三个输入和三个输出，类型都必须为 
 
 当前固定使用 `ort = 2.0.0-rc.15` 和 API 27，不启用 `ndarray`。默认预编译运行库为 1.31.0，也可使用兼容 API 27 的自备运行库，包括 1.28.0。动态构建需在初始化前设置 `ORT_DYLIB_PATH`，指向库文件而不是目录。
 
-创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+创建环境前先调用 `anr::ort::initialize_runtime()`，让动态库加载错误正常返回；这个函数只准备运行库，不创建或覆盖环境。应用创建一个 `Environment`，供多个降噪实例共享。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以一个线程执行算子并关闭线程池忙等待。GPU features 不会选择 GPU 或安装驱动；需要自定义 provider 时，先配置 `SessionBuilder`，调用 `anr::ort::session_from_file(builder, path, &providers)`，再传给 `DFN3::new(session)`。
 
 项目的 ORT 默认策略允许 GPU provider 与 CPU 算子混合执行。CLI 和 benchmark 保留 ORT 对不支持或更适合 CPU 的算子的正常分配，不是 benchmark 的临时选项；`DFN3::new(session)` 保留调用方 Session 的策略。请求的 provider 仍须成功注册，缺少 GPU 库或 provider 初始化失败仍报错。原生 GL/GLES/Vulkan/wgpu/D3D12 实现不变，不因此新增 CPU 执行器。
 
@@ -539,7 +541,9 @@ cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --feature
 
 所有 ORT 后端共用一个 Environment，某个 Session 失败后也保留它。每个 Session 只显式注册指定 provider，注册失败即报错；禁用环境默认 provider 和线程池忙等待，使用单线程顺序执行。DirectML 另关闭 memory pattern。ORT 可以按正常规则将部分算子分配到 CPU；TensorRT 不会静默追加 CUDA provider。
 
-**当前模型兼容性：** 在 Windows / RTX 2080 Ti 和版本一致的 ORT 1.31 运行库上，仓库 DFN3 导出图已通过 DirectML 与正常 CPU 算子分配实跑。CUDA 不支持原始模型中已有的 `FusedConv(Sigmoid)`，关闭图融合也不能将其展开；TensorRT 报告 `/SequenceAt_11_output_0` 缺少中间张量 shape。这两项初始化失败仍返回错误，不生成性能数字。三个 ORT 测量路径另已通过自行编写的控制图验收。硬件回归需手动运行 `cargo test --release --target-dir target/benchmark-ort-gpu -p anr-bench --features ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml --test ort -- --ignored`。
+**模型准备：** CUDA/TensorRT 通过共用的 `anr-ort` 加载入口，在创建 Session 前转换内存中的副本，不改写原 ONNX 或权重。CUDA 展开不受支持的 sigmoid `FusedConv`；TensorRT 另将静态 `SplitToSequence`/`SequenceAt` 状态访问改为 `Split`，并将能够安全展开的张量 `If` 分支改为 `Where`。CPU、DirectML 及原生 Compute 保留原有加载方式。转换计入初始化，不在每帧重复执行或计时。部分不支持的算子仍可交给 CPU；TensorRT 检查算子支持情况时，可能输出无法导入 vendor 融合算子的诊断，实际初始化或推理错误仍使该后端失败。
+
+在 Windows / RTX 2080 Ti 和版本一致的 ORT 1.31 运行库上，原模型已通过 CUDA/TensorRT/DirectML 与原图 CPU 的数值对照，覆盖动态衰减量、reset 和不足一帧的输入。手动数值回归先设置 `ANR_DFN3_MODEL`，再运行 `cargo test --release --target-dir target/benchmark-ort-gpu -p anr-ort --features cuda,tensorrt,directml --test compat -- --ignored`；匹配的 provider DLL 除 benchmark 可执行文件旁外，也需位于测试程序的 `release/deps` 目录或对应加载路径。
 
 所有后端共用固定种子生成的 1 秒合成音频，包含 220 Hz、880 Hz 正弦波与噪声，以 48 kHz 单声道、每帧 480 个采样连续循环。输入生成、模型读取、shader 编译、ORT Session 构建、预热、统计排序和报告输出不计入正式测量；初始化耗时单独列出。预热后保留模型状态与输入位置，不逐帧 reset，计时循环不由 benchmark 分配内存。
 
@@ -624,6 +628,6 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 
 本仓库提供的 [模型资产 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 已由维护者授权按 **MIT OR Apache-2.0** 分发，仅限 [清单](.github/models/dfn3.json) 中 SHA-256 对应的文件；ZIP 附带模型许可与说明。其他来源的模型仍需单独确认，不能从 DeepFilterNet 源码的许可推断任意导出文件或权重的权利。
 
-CLI 的 Symphonia 解码器采用 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及执行 provider 所依赖的库也各有许可要求。源码获取、修改与二进制分发义务见 [第三方说明](crates/anr-cli/THIRD-PARTY-NOTICES.md)，项目双许可不替代这些条款。
+CLI 的 Symphonia 解码器与 ORT 适配器使用的 `onnx-protobuf` 消息定义采用 MPL-2.0；rubato、Rust `ort`、ONNX Runtime 及执行 provider 所依赖的库也各有许可要求。源码获取、修改与二进制分发义务见 [第三方说明](crates/anr-cli/THIRD-PARTY-NOTICES.md)，项目双许可不替代这些条款。
 
 版本变更见 [CHANGELOG.md](CHANGELOG.md)，持续维护的发版步骤见 [CI and Release](.github/workflows/ci.yml)。

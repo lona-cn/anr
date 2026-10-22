@@ -13,7 +13,7 @@ pub use models::default_model_path;
 #[cfg(feature = "ort")]
 pub mod ort {
     pub use anr_ort::ort::*;
-    pub use anr_ort::{DFN3, initialize_runtime};
+    pub use anr_ort::{DFN3, ModelTarget, initialize_runtime, prepare_model, session_from_file};
 }
 
 #[cfg(feature = "ort")]

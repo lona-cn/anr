@@ -23,6 +23,16 @@ MPL-2.0 是文件级许可。其第 3.1–3.4 条要求，分发被覆盖源码�
 
 音频格式实现的软件许可也不是针对所有地区的 codec 专利或其他权利保证；具体使用和分发场景仍由分发者核实。
 
+## ONNX 消息解析：onnx-protobuf 0.2.3（MPL-2.0）
+
+启用 ORT 时，加载前的内存图转换使用未修改的 `onnx-protobuf` 0.2.3；它提供完整 ONNX 消息，并保留未知 protobuf 字段。
+
+- 精确版本源码：[docs.rs 源码](https://docs.rs/crate/onnx-protobuf/0.2.3/source/)，或 [crates.io 源码包](https://crates.io/api/v1/crates/onnx-protobuf/0.2.3/download)。
+- 上游：[oovm/Airs 的 onnx-protobuf](https://github.com/oovm/Airs/tree/dev/projects/onnx-protobuf)。
+- 完整许可：[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/)。与上述 Symphonia 相同的文件级源码获取、修改和二进制分发义务也适用于此组件，不能只提供项目的双许可。
+- 生成的消息要求精确的 `protobuf` 3.4.0 运行库；该组件采用 MIT，源码和许可见 [protobuf 3.4.0](https://docs.rs/crate/protobuf/3.4.0/source/)。
+
+
 ## 重采样、WAV 和其他 Rust 依赖
 
 | 组件 | 许可 | 上游 |

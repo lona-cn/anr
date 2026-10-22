@@ -1,6 +1,6 @@
 use crate::args::Backend;
 use anr_core::{Error, Result};
-use anr_ort::{DFN3, ort};
+use anr_ort::{DFN3, ort, session_from_file};
 use std::path::Path;
 
 pub fn load(
@@ -20,23 +20,25 @@ pub fn load(
     }
     // Retain the one process-wide environment even when session creation fails.
     let environment = environment.as_ref().expect("initialized ORT environment");
-    let session = (|| -> ort::Result<ort::session::Session> {
-        let mut builder = ort::session::Session::builder(environment)?
-            .with_no_environment_execution_providers()?
-            .with_independent_thread_pool()?
-            .with_intra_threads(1)?
-            .with_intra_op_spinning(false)?
-            .with_inter_op_spinning(false)?
-            .with_parallel_execution(false)?;
+    let session = (|| -> Result<ort::session::Session> {
+        let mut builder = (|| -> ort::Result<_> {
+            Ok(ort::session::Session::builder(environment)?
+                .with_no_environment_execution_providers()?
+                .with_independent_thread_pool()?
+                .with_intra_threads(1)?
+                .with_intra_op_spinning(false)?
+                .with_inter_op_spinning(false)?
+                .with_parallel_execution(false)?)
+        })()
+        .map_err(Error::backend)?;
         if backend == Backend::OrtDirectml {
-            builder = builder.with_memory_pattern(false)?;
+            builder = builder
+                .with_memory_pattern(false)
+                .map_err(|error| Error::backend(ort::Error::<()>::from(error)))?;
         }
         // Allow ORT's per-operator CPU placement, but never ignore EP registration errors.
-        builder
-            .with_execution_providers([provider.error_on_failure()])?
-            .commit_from_file(model)
-    })()
-    .map_err(Error::backend)?;
+        session_from_file(builder, model, &[provider])
+    })()?;
     DFN3::new(session)
 }
 

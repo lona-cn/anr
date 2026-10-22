@@ -137,9 +137,12 @@ The project pins `ort = 2.0.0-rc.15` with API 27, without `ndarray`. The default
 anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynamic"] }
 ```
 
-Call `anr::ort::initialize_runtime()` before `anr::ort::init().build()` to return dynamic-loading failures instead of entering the lazy loader. The helper does not build an environment; your application owns and configures it. Share that `Environment` across denoisers. `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, one intra-op thread, and no spinning. To choose another provider, use `anr::ort::session::Session::builder(&environment)` and pass the session to `DFN3::new(session)`.
+Call `anr::ort::initialize_runtime()` before `anr::ort::init().build()` to return dynamic-loading failures instead of entering the lazy loader. The helper does not build an environment; your application owns and configures it. Share that `Environment` across denoisers. `DFN3::from_file(&environment, path)` explicitly selects the built-in CPU provider, one intra-op thread, and no spinning. To choose another provider, configure a `SessionBuilder`, call `anr::ort::session_from_file(builder, path, &providers)`, then pass the session to `DFN3::new(session)`.
 
 ORT GPU sessions may use CPU kernels for unsupported or CPU-preferred operators. The library preserves the supplied session's operator placement; CLI and benchmark also allow this by default. Explicit provider registration failures remain errors, not an implicit replacement of an unavailable GPU provider with CPU.
+
+The shared loader prepares CUDA/TensorRT graphs in memory before session creation; it never overwrites the ONNX file or runs conversion per audio frame. CUDA's unsupported sigmoid convolution fusion is expanded; TensorRT additionally lowers eligible static state sequences and safe tensor conditionals. CPU/DirectML and native compute are unchanged. `anr::ort::prepare_model` and `ModelTarget` expose the same preparation for callers who already own model bytes; direct upstream session loading bypasses it.
+
 
 ### Compute backends without ORT
 
@@ -310,9 +313,12 @@ ORT 的 `DFN3::from_file(&environment, path)` 使用应用持有的 `Environment
 anr = { version = "0.1.1", default-features = false, features = ["ort-load-dynamic"] }
 ```
 
-在 `anr::ort::init().build()` 前调用 `anr::ort::initialize_runtime()`，让动态加载失败正常返回，避免进入上游的隐式加载路径。这个函数不创建环境，环境由应用持有和配置，多个降噪实例共享同一个 `Environment`。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以单线程执行算子并禁用忙等待。若要选其他 provider，用 `anr::ort::session::Session::builder(&environment)` 建立 session，再传给 `DFN3::new(session)`。
+在 `anr::ort::init().build()` 前调用 `anr::ort::initialize_runtime()`，让动态加载失败正常返回，避免进入上游的隐式加载路径。这个函数不创建环境，环境由应用持有和配置，多个降噪实例共享同一个 `Environment`。`DFN3::from_file(&environment, path)` 显式选择内置 CPU provider，以单线程执行算子并禁用忙等待。若要选其他 provider，先配置 `SessionBuilder`，调用 `anr::ort::session_from_file(builder, path, &providers)`，再传给 `DFN3::new(session)`。
 
 ORT GPU Session 可以让不支持或更适合 CPU 的算子使用 CPU kernel。库保留调用方 Session 的算子分配，CLI 和 benchmark 也默认允许这种混合执行。显式 provider 注册失败仍报错，不会把不可用的 GPU provider 隐式换成 CPU。
+
+共用加载入口在创建 CUDA/TensorRT Session 前于内存中转换图，不覆盖原 ONNX，也不在每帧重复转换。CUDA 展开不支持的 sigmoid 卷积融合；TensorRT 另转换符合条件的静态状态序列和可安全展开的张量分支。CPU、DirectML 与原生 Compute 保持原样。已有模型字节的调用方可使用 `anr::ort::prepare_model` 和 `ModelTarget`；直接用上游 API 创建 Session 会绕过这一步。
+
 
 ### 不使用 ORT 的 Compute 后端
 

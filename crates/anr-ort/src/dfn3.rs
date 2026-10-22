@@ -56,6 +56,8 @@ impl DFN3 {
     /// Configure execution providers on the session before passing it here.
     /// The wrapper preserves the session's operator placement: unsupported or
     /// CPU-preferred operators may use CPU kernels alongside a GPU provider.
+    /// Use [`crate::session_from_file`] for CUDA/TensorRT graph preparation
+    /// before creating the session; this wrapper cannot modify a loaded graph.
     /// Tensors are CPU-backed, including when a provider executes on a GPU;
     /// ORT handles the required transfers. Audio/state buffers are allocated
     /// once and the two state buffers alternate without a per-frame state copy.

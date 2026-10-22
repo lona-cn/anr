@@ -10,7 +10,9 @@
 - 新增工作区工具 `anr-bench`，串行比较 `anr-gl`、`anr-vk`、`anr-dx` 的连续帧推理性能；共用固定种子的 48 kHz 单声道输入，初始化单独计时，支持预热、后端选择、降噪强度和 JSON。报告同步调用延迟、nearest-rank P50/P95/P99、FPS、RTF 及超过 10 ms 的帧数；任一后端失败仍继续测试其余后端，并返回非零退出码。默认构建不依赖 ORT，不改动原生推理实现，也不加入应用 Release ZIP。
 - `anr-bench` 增加可选的 `ort-cuda`、`ort-tensorrt`、`ort-directml` 后端，以及 `ort-download-binaries` / `ort-load-dynamic` 运行库来源选项；共用一个 ORT Environment，缺失运行库或 provider 作为单后端错误返回，新增 opt-in 硬件回归。
 - 统一项目 ORT 默认策略：允许不支持或按 ORT 分配规则更适合 CPU 的算子使用 CPU kernel，CLI 和 benchmark 不再强制全算子 GPU；库保留调用方 Session 设置，provider 注册或初始化失败仍报错。benchmark 用 `cpu_fallback_allowed` 标注执行策略，耗时包含 CPU 算子及设备传输，不冒充纯 GPU kernel 时间。
-- Windows / RTX 2080 Ti、匹配的 ORT 1.31 运行库下，当前 DFN3 已通过原生 GL/VK/DX 和 DirectML 混合执行 benchmark；CUDA 不支持原始模型中的 `FusedConv(Sigmoid)`，TensorRT 缺少 `/SequenceAt_11_output_0` shape，均保留实际初始化错误，不生成性能数字。
+- 新增 ORT 加载前的运行时内存改图：CUDA 展开不支持的 `FusedConv(Sigmoid)`；TensorRT 另将静态状态序列访问转换为 `Split`，将可以证明安全的固定形状张量分支转换为 `Where`。保持权重、状态布局及动态衰减语义，不改写原 ONNX、不生成派生模型或磁盘缓存、不在每帧重复转换。
+- 新增并导出 `session_from_file`、`prepare_model`、`ModelTarget`，CLI 与 benchmark 共用加载入口；保留调用方 builder 配置及显式外部权重目录，注册失败仍报错。CPU、DirectML 和原生 GL/VK/DX 加载不变，不使用 TRT 全局算子黑名单或整 Session CPU 重试。
+- 使用完整 `onnx-protobuf` 消息保留未知字段，补充其 MPL-2.0 源码获取说明。新增数值回归覆盖卷积残差、静态及动态索引、分支局部命名、条件形状和不能提前执行的分支；真实模型 GPU 回归覆盖动态强度、reset 和尾帧。
 
 ## 0.1.1
 

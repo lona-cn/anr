@@ -5,8 +5,12 @@
 //! accidentally selecting an incompatible ORT crate version.
 
 mod dfn3;
+mod loading;
+mod model;
 mod runtime;
 
 pub use dfn3::DFN3;
+pub use loading::session_from_file;
+pub use model::{ModelTarget, prepare_model};
 pub use ort;
 pub use runtime::initialize_runtime;
