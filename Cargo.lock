@@ -242,7 +242,14 @@ dependencies = [
 name = "anr-lite"
 version = "0.1.1"
 dependencies = [
+ "anyhow",
  "burn",
+ "clap",
+ "hound",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

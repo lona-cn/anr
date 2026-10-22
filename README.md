@@ -330,7 +330,7 @@ The table reports initialization, min/mean/max synchronous call latency, nearest
 
 ### Develop ANR-Lite-48 with Burn
 
-`anr-lite` is a separate Burn 0.22.1 model crate for **48 kHz, mono speech**. It implements the ANR-Lite-48 architecture, but includes **no pretrained weights, dataset loader, or training loop**. Random initialization is not a usable denoising model. It is not selected by the CLI and does not replace the hash-locked DFN3 export.
+`anr-lite` is a separate Burn 0.22.1 model crate for **48 kHz, mono speech**. It implements the ANR-Lite-48 architecture and an optional VoiceBank-DEMAND training binary, but includes **no pretrained weights or automatic dataset downloads**. Random initialization is not a usable denoising model. It is not selected by the `anr` CLI and does not replace the hash-locked DFN3 export.
 
 The network combines 64-band ERB envelope features with 96-bin complex low-frequency features. Both encoders use 16 channels; the shared temporal core has two 128-dimensional GRUs with four groups and dense inter-group mixing. The two heads predict full-band gains and five-tap complex residual filters. The residual head starts at zero. Batch normalization uses Burn's `train()` / `valid()` modes.
 
@@ -356,9 +356,28 @@ let output = processor.forward(&model, input);
 
 `AudioProcessor::forward` starts a new batch of streams, pads the final hop, flushes, compensates the known delay, and returns the original sample count. For continuous audio, use `initial_state(batch)` and `forward_frame` with `[batch, 480]` tensors. Streaming returns delayed samples: `AUDIO_DELAY_SAMPLES = 1440` (30 ms), excluding collection of the current input block. At EOF, right-pad a partial hop and call `flush` once to emit the three delayed hops. Flush advances the stream; replacing its state starts a new recording.
 
-For future training, use an autodiff device and `model.train()`. Audio transforms, feature normalization, the network and spectral filtering retain their gradient graph across frames. Call `AudioState::detach()` or `ModelState::detach()` only at an intentional truncated-backpropagation boundary. Burn module records preserve model parameters and normalization state, not the live audio stream.
+For custom training loops, use an autodiff device and `model.train()`. Audio transforms, feature normalization, the network and spectral filtering retain their gradient graph across frames. Call `AudioState::detach()` or `ModelState::detach()` only at an intentional truncated-backpropagation boundary. Burn module records preserve model parameters and normalization state, not the live audio stream.
 
 The 960-point differentiable FFT combines native 64-point FFTs with a fixed radix-15 stage because Burn's native FFT only accepts powers of two. Sparse ERB mapping avoids a dense frequency-by-band matrix. Model and DSP activations stay on the chosen device; this implementation does not provide allocation-free audio callbacks, custom fused native shaders, or verified speed/quality improvements over DFN3.
+
+#### Train on VoiceBank-DEMAND 28-speaker
+
+Enable `train` to build `anr-lite-train`. Run from the workspace root; `--dataset` defaults to `datasets/VoiceBank-DEMAND 28-speaker`. The extracted dataset must contain `clean_trainset_28spk_wav`, `noisy_trainset_28spk_wav`, `clean_testset_wav`, and `noisy_testset_wav`. The loader requires same-name, same-length mono 48 kHz PCM16 WAV pairs; it does not resample, normalize the pair independently, or modify dataset files. Text transcripts are not needed.
+
+```sh
+# CPU
+cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --device cpu
+# Discrete GPU, explicitly selected
+cargo run -p anr-lite --release --locked --features train,wgpu --bin anr-lite-train -- --device wgpu
+# Bounded GPU smoke: real updates, limited validation and checkpoint reload/test
+cargo run -p anr-lite --locked --features train,wgpu --bin anr-lite-train -- --device wgpu --epochs 1 --batch-size 2 --segment-seconds 0.04 --max-steps 2 --max-validation-items 1 --evaluate-test --max-test-items 1
+```
+
+Defaults are 50 epochs, batch size 8, 2-second random paired crops, AdamW at learning rate 0.001 with gradient clipping, and seed 42. Short files are zero-padded with valid-length masking. The loss combines compressed-magnitude MSE, compressed-complex MSE (compression 0.3), and 0.1-weight waveform L1; analysis uses a Hann window, FFT 960, and hop 480.
+
+Speakers `p226,p287` are held out from the training directory by default; override with `--validation-speakers`. Validation uses complete utterances in inference mode. Only validation selects `best.bin`. The official test set is used only with `--evaluate-test`, after training, by loading that checkpoint. `--max-steps`, `--max-validation-items`, and `--max-test-items` are smoke limits: their results are not full-corpus evaluation or evidence of trained denoising quality.
+
+Each run creates a new `target/anr-lite-training/<time>-<pid>` directory, or the new path supplied by `--output-dir`; an existing directory is refused. Artifacts are `config.json`, `splits.json`, `metrics.jsonl`, `summary.json`, `best.bin`, and `last.bin`. The records contain model parameters and BatchNorm state, **not optimizer/RNG state for exact training resume**. Load a trained record with `AnrLite48::new(&device).try_load_file(path)?.valid()`. Use `--help` for the complete argument list. FFmpeg is not required by the trainer.
 
 ### Which crate should I use?
 
@@ -384,7 +403,7 @@ Use `anr` in most Rust applications, or install `anr-cli` to work with files. Ba
 | `anr-wgpu` | wgpu compute DFN3, without ORT. |
 | `anr-dx` | Native Windows Direct3D 12 compute DFN3, without ORT, DirectML, or wgpu. |
 | `anr-dfn3` | Shared fixed-model parameters, execution plan, worker, and shader sources; not a standalone device backend. |
-| `anr-lite` | Develop the untrained ANR-Lite-48 architecture in Burn, with differentiable streaming audio DSP, CPU and optional wgpu execution. |
+| `anr-lite` | Develop and train ANR-Lite-48 in Burn, with differentiable streaming audio DSP, optional VoiceBank-DEMAND training, CPU and optional wgpu execution. No pretrained weights included. |
 | `anr-cli` | You want the `anr` executable for files, batches, inspection, and raw PCM streams. CPU ORT is enabled by default. |
 | `anr-bench` | Workspace-only streaming benchmark for native `gl`/`vk`/`dx`/`cuda`/`opencl`, opt-in native TensorRT/OpenVINO, and optional ORT GPU providers; table/JSON output, not included in application release ZIPs. |
 
@@ -744,7 +763,7 @@ cargo run --release --target-dir target/benchmark-ort-gpu -p anr-bench --feature
 
 ### 使用 Burn 开发 ANR-Lite-48
 
-`anr-lite` 是独立的 Burn 0.22.1 模型库，输入为 **48 kHz 单声道语音**。目前已实现网络和音频处理，但**没有预训练权重、数据加载器或训练循环**。随机初始化模型不能直接用于有效降噪；CLI 不会选择它，也不会用它替换固定 SHA-256 的 DFN3 模型。
+`anr-lite` 是独立的 Burn 0.22.1 模型库，输入为 **48 kHz 单声道语音**。已实现网络、音频处理与可选的 VoiceBank-DEMAND 训练 bin，但**不附带预训练权重，不自动下载数据集**。随机初始化模型不能直接用于有效降噪；`anr` CLI 不会选择它，也不会用它替换固定 SHA-256 的 DFN3 模型。
 
 网络分别处理 64-band ERB 包络与最低 96 个频点的复数细节，编码器均为 16 通道；共享时序网络包含两层 128 维、四分组 GRU，每层后进行跨组混合。两个输出头分别预测全带增益和五 tap 复数残差滤波系数，残差头以零初始化。BatchNorm 沿用 Burn 的 `train()` / `valid()` 模式。
 
@@ -770,9 +789,28 @@ let output = processor.forward(&model, input);
 
 `AudioProcessor::forward` 从新状态开始，处理尾帧补零、结束 flush 和已知延迟补偿，返回原始采样数。连续音频使用 `initial_state(batch)` 和接收 `[batch, 480]` 张量的 `forward_frame`。流式输出延迟为 `AUDIO_DELAY_SAMPLES = 1440`（30 ms），不包含收集当前输入帧的时间。结束时先补齐不足一帧的输入，再调用一次 `flush` 取出最后三个延迟帧；flush 会推进状态，开始另一段录音时应新建状态。
 
-后续训练使用启用 autodiff 的设备与 `model.train()`。音频变换、特征归一化、网络及频谱滤波保留跨帧计算图；仅在有意截断反向传播时调用 `AudioState::detach()` 或 `ModelState::detach()`。Burn Module record 保存模型参数和归一化状态，不保存正在处理的音频流状态。
+自行编写训练循环时，使用启用 autodiff 的设备与 `model.train()`。音频变换、特征归一化、网络及频谱滤波保留跨帧计算图；仅在有意截断反向传播时调用 `AudioState::detach()` 或 `ModelState::detach()`。Burn Module record 保存模型参数和归一化状态，不保存正在处理的音频流状态。
 
 960 点可微 FFT 由原生 64 点 FFT 与固定 radix-15 阶段组合，因为 Burn 原生 FFT 只接受 2 的幂。稀疏 ERB 映射不构造稠密频率矩阵，模型与 DSP 激活不读回 CPU。本实现不是无分配音频 callback 或已融合的原生 shader，也没有证明比 DFN3 更快或音质更好。
+
+#### 使用 VoiceBank-DEMAND 28-speaker 训练
+
+启用 `train` feature 后可构建 `anr-lite-train`。从工作区根目录运行，`--dataset` 默认是 `datasets/VoiceBank-DEMAND 28-speaker`。已解压的数据集应包含 `clean_trainset_28spk_wav`、`noisy_trainset_28spk_wav`、`clean_testset_wav`、`noisy_testset_wav` 四个目录。加载器要求同名、等长的 48 kHz 单声道 PCM16 WAV 配对，不重采样、不分别归一化 noisy/clean，也不修改数据集文件；无需文本转录。
+
+```sh
+# CPU
+cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --device cpu
+# 明确选择独立 GPU
+cargo run -p anr-lite --release --locked --features train,wgpu --bin anr-lite-train -- --device wgpu
+# 短跑验收：真实更新参数、限量验证，并重载 checkpoint 测试
+cargo run -p anr-lite --locked --features train,wgpu --bin anr-lite-train -- --device wgpu --epochs 1 --batch-size 2 --segment-seconds 0.04 --max-steps 2 --max-validation-items 1 --evaluate-test --max-test-items 1
+```
+
+默认训练 50 轮、batch size 8、随机裁剪 2 秒的配对片段，使用学习率 0.001 的 AdamW 与梯度裁剪，随机种子为 42。短文件补零，并按实际有效长度计算损失。损失由压缩幅度谱 MSE、压缩复数谱 MSE（压缩指数 0.3）及权重为 0.1 的波形 L1 组成，分析使用 Hann 窗、960 点 FFT、480 点 hop。
+
+默认从训练目录留出 `p226,p287` 两位说话人验证，可用 `--validation-speakers` 修改。验证以推理模式处理完整语句，只用验证损失选择 `best.bin`。只有显式添加 `--evaluate-test`，才会在训练结束后加载该 checkpoint 评估官方测试集。`--max-steps`、`--max-validation-items`、`--max-test-items` 用于短跑检查，其结果不代表完整数据集评估或已训练模型的降噪质量。
+
+每次运行新建 `target/anr-lite-training/<time>-<pid>`，也可用 `--output-dir` 指定新路径；已有目录会被拒绝，不覆盖旧训练结果。输出包括 `config.json`、`splits.json`、`metrics.jsonl`、`summary.json`、`best.bin`、`last.bin`。模型 record 保存权重与 BatchNorm 状态，**不包含优化器和随机数状态，不能用于精确续训**。加载训练后的权重使用 `AnrLite48::new(&device).try_load_file(path)?.valid()`。完整参数见 `--help`；训练程序本身不依赖 FFmpeg。
 
 ### 各个包怎么选
 
@@ -789,7 +827,7 @@ Rust 应用通常使用 `anr`；要直接处理文件则安装 `anr-cli`。各�
 | `anr-wgpu` | 使用 wgpu Compute DFN3，不依赖 ORT。 |
 | `anr-dx` | 使用原生 Windows Direct3D 12 Compute DFN3，不依赖 ORT、DirectML 或 wgpu。 |
 | `anr-dfn3` | 固定模型参数、执行顺序、工作线程与 shader 源码；本身不提供设备后端。 |
-| `anr-lite` | 使用 Burn 开发尚未训练的 ANR-Lite-48，包含可微流式音频处理、CPU 与可选 wgpu 执行。 |
+| `anr-lite` | 使用 Burn 开发和训练 ANR-Lite-48，包含可微流式音频处理、可选的 VoiceBank-DEMAND 训练程序、CPU 与可选 wgpu 执行；不附带预训练权重。 |
 | `anr-cli` | 安装名为 `anr` 的命令行工具，处理文件、批处理、音频信息查询和 raw PCM 流；默认启用 CPU ORT。 |
 | `anr-bench` | 工作区内连续帧 benchmark，支持原生 `gl`/`vk`/`dx`/`cuda`/`opencl`、显式启用的原生 TensorRT/OpenVINO，以及可选 ORT GPU provider；输出表格或 JSON，不包含在应用 Release ZIP 中。 |
 

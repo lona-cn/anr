@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- `anr-lite` 新增可选 `train` feature 与 `anr-lite-train`：读取已解压的 VoiceBank-DEMAND 28-speaker，使用 AdamW 和可微压缩幅度谱／复数谱／波形损失进行真实训练，支持 CPU Flex 与显式 wgpu 独显。
+- 训练程序严格检查同名等长的 48 kHz 单声道 PCM16 配对，按说话人划分验证集，掩蔽短片段补零；仅用验证集选模，官方测试集需显式启用。每次使用新目录保存 best/last 模型和训练记录，提供短跑步数／评估数量限制，不修改数据集，不将模型权重 checkpoint 冒充包含优化器状态的精确续训快照。
 - `anr-wgpu` 新增 `wasm32-unknown-unknown` 浏览器 WebGPU：通过 `anr::wgpu::web::DFN3` 异步处理，或使用生成的 JavaScript `DFN3` 类；共用模型字节校验、权重布局、WGSL 和固定调度，原生同步 API 不变，不新增 CPU/WebGL fallback。
 - 新增 Web 包构建脚本、可转移缓冲的串行 module Worker 示例与真实 WASM 浏览器 reference 回归；覆盖强度/reset、尾帧状态、无效输入、并发拒绝和处理中释放包装对象，并为初始化/映射错误与 future 取消提供设备和状态清理。
 - 新增独立的 `anr-lite`，使用 Burn 0.22.1 实现 ANR-Lite-48：64-band ERB／96-bin 低频双分辨率编码器、两层 128 维四分组 GRU 与跨组混合、全带增益和五 tap 复数残差输出。默认使用 CPU Flex，可选 wgpu；不修改现有 DFN3 推理后端或 CLI。

@@ -1,7 +1,8 @@
-//! ANR-Lite-48: an untrained, differentiable full-band speech enhancement model.
+//! ANR-Lite-48: a differentiable full-band speech enhancement model.
 //!
-//! This crate defines the architecture and its streaming signal processing. It
-//! does not contain pretrained weights, a training loop, or dataset downloads.
+//! This crate defines the architecture and its streaming signal processing.
+//! The optional `train` feature adds a VoiceBank-DEMAND training binary.
+//! No pretrained weights or automatic dataset downloads are included.
 //!
 //! [`AnrLite48`] is a regular Burn [`burn::module::Module`]: use `train()` for
 //! autodiff, `valid()` for inference, and its record methods for checkpoints.

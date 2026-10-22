@@ -11,9 +11,25 @@ repository = "https://github.com/lona-cn/anr"
 default = ["flex"]
 flex = ["burn/flex"]
 wgpu = ["burn/wgpu"]
+train = ["burn/optim", "dep:anyhow", "dep:clap", "dep:hound", "dep:rand", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 burn = { version = "=0.22.1", default-features = false, features = ["std", "autodiff", "signal"] }
+anyhow = { version = "1.0", optional = true }
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+hound = { version = "3.5.1", optional = true }
+rand = { version = "0.10", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[dev-dependencies]
+tempfile = "3.27"
+
+[[bin]]
+name = "anr-lite-train"
+path = "src/bin/anr-lite-train.rs"
+required-features = ["train"]
+doc = false
 
 [[example]]
 name = "smoke"
