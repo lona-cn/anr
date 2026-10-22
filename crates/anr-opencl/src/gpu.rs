@@ -2,6 +2,7 @@ use anr_core::Result;
 use anr_dfn3::{Executor, FRAME_SIZE, Model, STATE_SIZE, ShaderKind, backend};
 use libloading::Library;
 use std::ffi::{c_char, c_void};
+use std::fmt::Write as _;
 use std::mem::{size_of, size_of_val};
 use std::ptr::{null, null_mut};
 
@@ -279,12 +280,44 @@ impl Api {
     }
 }
 
+fn program_source(model: &Model) -> String {
+    let mut source = String::new();
+    for (index, dispatch) in model.dispatches.iter().enumerate() {
+        writeln!(
+            source,
+            "#define DFN3_SHADER {}\n#define DFN3_ENTRY dispatch_{index}",
+            dispatch.shader.index()
+        )
+        .expect("writing to a String cannot fail");
+        for (word, value) in dispatch.params.iter().enumerate() {
+            if word == 22 || word == 23 {
+                // Keep strength changes live, including attenuation disable.
+                writeln!(
+                    source,
+                    "#define DFN3_P_{word}u (parameters[{}u])",
+                    index * 32 + word
+                )
+                .expect("writing to a String cannot fail");
+            } else {
+                writeln!(source, "#define DFN3_P_{word}u {value}u")
+                    .expect("writing to a String cannot fail");
+            }
+        }
+        source.push_str(include_str!("kernels.cl"));
+        source.push_str("\n#undef DFN3_SHADER\n#undef DFN3_ENTRY\n");
+        for word in 0..dispatch.params.len() {
+            writeln!(source, "#undef DFN3_P_{word}u").expect("writing to a String cannot fail");
+        }
+    }
+    source
+}
+
 pub(crate) struct Gpu {
     api: Api,
     context: Handle,
     queue: Handle,
     program: Handle,
-    kernels: [Handle; 3],
+    kernels: Vec<Handle>,
     // weights, state0, state1, scratch, parameter table
     buffers: [Handle; 5],
     model: Model,
@@ -302,7 +335,7 @@ impl Gpu {
             context: null_mut(),
             queue: null_mut(),
             program: null_mut(),
-            kernels: [null_mut(); 3],
+            kernels: Vec::new(),
             buffers: [null_mut(); 5],
             model,
             parity: 0,
@@ -353,7 +386,7 @@ impl Gpu {
             gpu.zero(gpu.buffers[1], sizes[1])?;
             gpu.zero(gpu.buffers[2], sizes[2])?;
             gpu.zero(gpu.buffers[3], sizes[3])?;
-            let source = include_str!("kernels.cl");
+            let source = program_source(&gpu.model);
             let pointer = source.as_ptr().cast::<c_char>();
             let length = source.len();
             let program =
@@ -373,9 +406,14 @@ impl Gpu {
                     gpu.build_log(device)
                 )));
             }
-            for (index, name) in [c"network", c"dsp", c"fft"].into_iter().enumerate() {
+            gpu.kernels.reserve(gpu.model.dispatches.len());
+            for (index, dispatch) in gpu.model.dispatches.iter().enumerate() {
+                let name = std::ffi::CString::new(format!("dispatch_{index}"))
+                    .expect("generated kernel name contains no NUL");
                 let kernel = (gpu.api.clCreateKernel)(gpu.program, name.as_ptr(), &mut status);
-                gpu.kernels[index] = created(kernel, status, "kernel creation")?;
+                let kernel = created(kernel, status, "kernel creation")?;
+                // Own it before any subsequent fallible query or argument setup.
+                gpu.kernels.push(kernel);
                 let mut group_limit = 0usize;
                 check(
                     (gpu.api.clGetKernelWorkGroupInfo)(
@@ -400,7 +438,11 @@ impl Gpu {
                     ),
                     "kernel local memory",
                 )?;
-                let required = if index == 0 { 64 } else { 128 };
+                let required = if dispatch.shader == ShaderKind::Network {
+                    64
+                } else {
+                    128
+                };
                 if group_limit < required || local > local_limit {
                     return Err(backend(format!(
                         "OpenCL kernel {} cannot launch: group limit {group_limit}, required {required}, local {local}/{local_limit}",
@@ -539,14 +581,12 @@ impl Gpu {
                 input.as_ptr().cast(),
                 size_of_val(input),
             )?;
-            for kernel in self.kernels {
+            for &kernel in &self.kernels {
                 self.arg(kernel, 1, &self.buffers[1 + self.parity])?;
                 self.arg(kernel, 2, &self.buffers[2 - self.parity])?;
             }
             for (i, dispatch) in self.model.dispatches.iter().enumerate() {
-                let kernel = self.kernels[dispatch.shader.index()];
-                let offset = (i * 32) as u32;
-                self.arg(kernel, 5, &offset)?;
+                let kernel = self.kernels[i];
                 let local = if dispatch.shader == ShaderKind::Network {
                     64usize
                 } else {
@@ -623,7 +663,7 @@ impl Drop for Gpu {
             if !self.queue.is_null() {
                 (self.api.clFinish)(self.queue);
             }
-            for kernel in self.kernels {
+            for &kernel in &self.kernels {
                 if !kernel.is_null() {
                     (self.api.clReleaseKernel)(kernel);
                 }

@@ -1,5 +1,5 @@
 use anr_core::Result;
-use anr_dfn3::{FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, ShaderKind, backend};
+use anr_dfn3::{FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, backend};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
@@ -48,7 +48,7 @@ pub(super) struct Core {
     scratch: wgpu::Buffer,
     parameters: wgpu::Buffer,
     pub(super) readback: wgpu::Buffer,
-    pipelines: [wgpu::ComputePipeline; 3],
+    pipelines: Vec<wgpu::ComputePipeline>,
     bind_groups: [wgpu::BindGroup; 2],
     model: Model,
     stride: u32,
@@ -241,20 +241,26 @@ impl Core {
             immediate_size: 0,
         });
         errors.check()?;
-        let pipelines = ShaderKind::ALL.map(|kind| {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("DFN3 canonical WGSL"),
-                source: wgpu::ShaderSource::Wgsl(anr_dfn3::shaders::wgsl(kind).into()),
-            });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("DFN3 compute pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
+        let pipelines = model
+            .dispatches
+            .iter()
+            .map(|step| {
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("DFN3 specialized WGSL"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        anr_dfn3::shaders::specialized_wgsl(step).into(),
+                    ),
+                });
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("DFN3 fixed dispatch pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
             })
-        });
+            .collect();
         errors.check()?;
         let bind_groups = [0, 1].map(|current| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -350,7 +356,7 @@ impl Core {
                 label: Some("DFN3 dispatch"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipelines[step.shader.index()]);
+            pass.set_pipeline(&self.pipelines[index]);
             pass.set_bind_group(0, &self.bind_groups[current], &[index as u32 * self.stride]);
             pass.dispatch_workgroups(step.groups, 1, 1);
         }

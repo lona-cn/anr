@@ -1,6 +1,6 @@
 use anr_core::Result;
 use anr_dfn3::{
-    Executor, FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, ShaderKind, backend, shaders,
+    Dispatch, Executor, FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, backend, shaders,
 };
 use std::ffi::{CString, c_void};
 use std::mem::ManuallyDrop;
@@ -429,9 +429,9 @@ fn root_signature(device: &ID3D12Device) -> Result<ID3D12RootSignature> {
 fn pipeline(
     device: &ID3D12Device,
     root: &ID3D12RootSignature,
-    kind: ShaderKind,
+    dispatch: &Dispatch,
 ) -> Result<ID3D12PipelineState> {
-    let hlsl = shaders::hlsl(kind)?;
+    let hlsl = shaders::hlsl(dispatch)?;
     let entry = CString::new(hlsl.entry_point)
         .map_err(|_| backend("HLSL entry point contains a null byte"))?;
     let mut bytecode = None;
@@ -456,7 +456,9 @@ fn pipeline(
                 .as_ref()
                 .map(|blob| String::from_utf8_lossy(blob_bytes(blob)))
                 .unwrap_or_default();
-            return Err(backend(format!("D3DCompile {kind:?}: {error}: {message}")));
+            return Err(backend(format!(
+                "D3DCompile {dispatch:?}: {error}: {message}"
+            )));
         }
         let bytecode = bytecode.ok_or_else(|| backend("D3DCompile returned no shader bytecode"))?;
         let mut description = D3D12_COMPUTE_PIPELINE_STATE_DESC {
@@ -477,7 +479,7 @@ pub(crate) struct Gpu {
     context: Context,
     model: Model,
     root: ID3D12RootSignature,
-    pipelines: [ID3D12PipelineState; 3],
+    pipelines: Vec<ID3D12PipelineState>,
     weights: Buffer,
     states: [Buffer; 2],
     scratch: Buffer,
@@ -644,12 +646,8 @@ impl Gpu {
             list.SetComputeRootShaderResourceView(1, state_in.address());
             list.SetComputeRootUnorderedAccessView(2, state_out.address());
             list.SetComputeRootUnorderedAccessView(3, self.scratch.address());
-            let mut active = None;
             for (index, dispatch) in self.model.dispatches.iter().enumerate() {
-                if active != Some(dispatch.shader) {
-                    list.SetPipelineState(&self.pipelines[dispatch.shader.index()]);
-                    active = Some(dispatch.shader);
-                }
+                list.SetPipelineState(&self.pipelines[index]);
                 list.SetComputeRootConstantBufferView(
                     4,
                     self.parameters.address() + index as u64 * u64::from(PARAMETER_STRIDE),
@@ -712,11 +710,10 @@ impl Gpu {
         let context = Context::new()?;
         let device = &context.device;
         let root = root_signature(device)?;
-        let pipelines = [
-            pipeline(device, &root, ShaderKind::Network)?,
-            pipeline(device, &root, ShaderKind::Dsp)?,
-            pipeline(device, &root, ShaderKind::Fft)?,
-        ];
+        let mut pipelines = Vec::with_capacity(model.dispatches.len());
+        for dispatch in &model.dispatches {
+            pipelines.push(pipeline(device, &root, dispatch)?);
+        }
         let weight_bytes = (model.weights.len() * size_of::<f32>()) as u64;
         let scratch_bytes = u64::from(model.scratch_len) * 4;
         let weights = Buffer::device(device, weight_bytes, false)?;

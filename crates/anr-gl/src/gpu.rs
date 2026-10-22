@@ -1,7 +1,7 @@
 use crate::context::GlContext;
 use crate::{FRAME_SIZE, GlApi, STATE_SIZE, backend};
 use anr_core::Result;
-use anr_dfn3::{Executor, Model, PARAMETER_BYTES, ShaderKind};
+use anr_dfn3::{Executor, Model, PARAMETER_BYTES};
 use glow::HasContext;
 
 struct Kernel {
@@ -41,7 +41,7 @@ impl Kernel {
 
 pub(crate) struct Gpu<const ES: bool> {
     context: GlContext,
-    programs: [Kernel; 3],
+    programs: Vec<Kernel>,
     buffers: [glow::NativeBuffer; 5],
     model: Model,
     stride: u32,
@@ -59,15 +59,15 @@ impl<const ES: bool> Gpu<ES> {
         let stride = PARAMETER_BYTES.div_ceil(alignment as u32) * alignment as u32;
         let parameters = model.parameter_bytes(stride);
         let zeros = vec![0.0_f32; STATE_SIZE];
-        let mut programs = Vec::with_capacity(3);
+        let mut programs = Vec::with_capacity(model.dispatches.len());
         let mut buffers = Vec::with_capacity(5);
         let setup = (|| -> Result<()> {
             unsafe {
-                for kind in ShaderKind::ALL {
+                for dispatch in &model.dispatches {
                     let source = if ES {
-                        anr_dfn3::shaders::glsl_es(kind)?
+                        anr_dfn3::shaders::glsl_es(dispatch)?
                     } else {
-                        anr_dfn3::shaders::glsl(kind)?
+                        anr_dfn3::shaders::glsl(dispatch)?
                     };
                     programs.push(Kernel::new(gl, &source)?);
                 }
@@ -132,9 +132,6 @@ impl<const ES: bool> Gpu<ES> {
             return Err(error);
         }
         model.weights = Vec::new();
-        let programs = programs
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("three fixed programs"));
         Ok(Self {
             context,
             programs,
@@ -196,7 +193,7 @@ impl<const ES: bool> Executor for Gpu<ES> {
                 bytemuck::cast_slice(input),
             );
             for (index, dispatch) in self.model.dispatches.iter().enumerate() {
-                gl.use_program(Some(self.programs[dispatch.shader.index()].program));
+                gl.use_program(Some(self.programs[index].program));
                 gl.bind_buffer_range(
                     glow::UNIFORM_BUFFER,
                     4,

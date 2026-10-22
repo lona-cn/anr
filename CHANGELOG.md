@@ -2,6 +2,10 @@
 
 版本按工作区版本号记录；标为“尚未发布”的条目不代表已上传 crates.io 或发布 GitHub 应用包。应用包发布流程见 [RELEASING.md](RELEASING.md)。
 
+## 尚未发布
+
+- `gl`、`gles`、`dx`、`wgpu`、`opencl` 改为逐调度编译固定参数 shader/kernel，算子类型、shape、stride、padding、group 和 buffer 偏移不再依赖运行时参数读取；仅保留衰减强度的动态参数。原 WGSL 运算体、FP32 表达式、状态布局及 Vulkan 编译路径不变，代价是初始化时编译更多程序。
+
 ## 0.2.0
 
 ### 文档与安装入口

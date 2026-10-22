@@ -1,8 +1,10 @@
 //! Canonical compute kernels and one-time native backend compilation.
 
-use crate::ShaderKind;
+use crate::{Dispatch, ShaderKind};
 #[cfg(any(feature = "glsl", feature = "spirv", feature = "hlsl"))]
 use anr_core::Result;
+
+mod specialized;
 
 /// Canonical WGSL kernels for wgpu and the GLSL, SPIR-V, and HLSL translations.
 pub fn wgsl(kind: ShaderKind) -> &'static str {
@@ -13,14 +15,27 @@ pub fn wgsl(kind: ShaderKind) -> &'static str {
     }
 }
 
+/// Bake the fixed dispatch parameters into WGSL before backend compilation.
+/// Only attenuation words 22 and 23 remain runtime uniform reads.
+pub fn specialized_wgsl(dispatch: &Dispatch) -> String {
+    specialized::wgsl(dispatch)
+}
+
 /// Native CUDA kernels shared by the CUDA and TensorRT executors.
 pub fn cuda() -> &'static str {
     include_str!("shaders/cuda.cu")
 }
 
-#[cfg(any(feature = "glsl", feature = "spirv", feature = "hlsl"))]
+#[cfg(feature = "spirv")]
 fn validated(kind: ShaderKind) -> Result<(naga::Module, naga::valid::ModuleInfo)> {
-    let source = wgsl(kind);
+    validated_source(kind, wgsl(kind))
+}
+
+#[cfg(any(feature = "glsl", feature = "spirv", feature = "hlsl"))]
+fn validated_source(
+    kind: ShaderKind,
+    source: &str,
+) -> Result<(naga::Module, naga::valid::ModuleInfo)> {
     let module = naga::front::wgsl::parse_str(source).map_err(|error| {
         crate::backend(format!(
             "{kind:?} WGSL parsing failed:\n{}",
@@ -53,22 +68,23 @@ fn unchecked() -> naga::proc::BoundsCheckPolicies {
     }
 }
 
-/// Compile once when creating the OpenGL program, never during frame execution.
+/// Compile a fixed dispatch once when creating its desktop OpenGL program.
 #[cfg(feature = "glsl")]
-pub fn glsl(kind: ShaderKind) -> Result<String> {
-    glsl_version(kind, naga::back::glsl::Version::Desktop(430))
+pub fn glsl(dispatch: &Dispatch) -> Result<String> {
+    glsl_version(dispatch, naga::back::glsl::Version::Desktop(430))
 }
 
-/// Compile native OpenGL ES 3.1 shaders, not WebGL shaders.
+/// Compile a fixed dispatch for native OpenGL ES 3.1, not WebGL.
 #[cfg(feature = "glsl")]
-pub fn glsl_es(kind: ShaderKind) -> Result<String> {
-    glsl_version(kind, naga::back::glsl::Version::new_gles(310))
+pub fn glsl_es(dispatch: &Dispatch) -> Result<String> {
+    glsl_version(dispatch, naga::back::glsl::Version::new_gles(310))
 }
 
 #[cfg(feature = "glsl")]
-fn glsl_version(kind: ShaderKind, version: naga::back::glsl::Version) -> Result<String> {
+fn glsl_version(dispatch: &Dispatch, version: naga::back::glsl::Version) -> Result<String> {
     use naga::back::glsl as target;
-    let (module, info) = validated(kind)?;
+    let kind = dispatch.shader;
+    let (module, info) = validated_source(kind, &specialized_wgsl(dispatch))?;
     let options = target::Options {
         version,
         writer_flags: target::WriterFlags::empty(),
@@ -154,11 +170,12 @@ pub struct Hlsl {
     pub entry_point: String,
 }
 
-/// Compile SM5.1 HLSL suitable for D3D12 root SRV/UAV/CBV descriptors.
+/// Compile a fixed dispatch to SM5.1 HLSL for D3D12 root descriptors.
 #[cfg(feature = "hlsl")]
-pub fn hlsl(kind: ShaderKind) -> Result<Hlsl> {
+pub fn hlsl(dispatch: &Dispatch) -> Result<Hlsl> {
     use naga::back::hlsl as target;
-    let (module, info) = validated(kind)?;
+    let kind = dispatch.shader;
+    let (module, info) = validated_source(kind, &specialized_wgsl(dispatch))?;
     let options = target::Options {
         shader_model: target::ShaderModel::V5_1,
         binding_map: (0..5)

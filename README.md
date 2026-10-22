@@ -106,6 +106,8 @@ Keep one denoiser per continuous stream. DFN3 processes **480 samples (10 ms)** 
 
 The nine native backends are independent of ORT and accept only the pinned DFN3 model identified in the [model notice](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md). OpenVINO imports its graph; the other native implementations execute a fixed model-specific schedule. The ORT adapter instead validates the DFN3 tensor contract; it is not a general-purpose ONNX audio interface.
 
+`gl`, `gles`, `dx`, `wgpu`, and `opencl` compile a separate program for each fixed dispatch during initialization. Operator modes, tensor dimensions, strides, groups, and buffer offsets are compile-time constants; attenuation strength remains mutable without recompilation. This trades more initialization work for simpler GPU programs. Vulkan retains its own compilation path.
+
 `ort-cuda`, `ort-tensorrt`, `ort-directml`, `ort-coreml`, and `ort-xnnpack` enable **ORT execution-provider support**, not the similarly named native backends. Provider features do not install drivers or select a GPU. ORT may place individual operators on CPU; failure to register the requested provider remains an error. Native GPU initialization does not silently fall back to CPU. OpenVINO's explicit CPU selection is a device choice, not fallback; GPU/NPU support depends on the device and graph, and NPU execution may use lower precision.
 
 For a native Vulkan application on Windows/Linux that supplies its own model file:
@@ -247,6 +249,8 @@ fn main() -> Result<()> {
 | `opencl` | OpenCL 1.2 硬件 GPU 执行。 |
 
 九种原生后端均独立于 ORT，只接受 [模型说明](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md) 标识的固定 DFN3 模型。OpenVINO 导入其计算图，其余原生实现使用模型专用的固定调度。ORT 适配器则检查 DFN3 的张量接口，也不是任意 ONNX 音频模型的通用运行器。
+
+`gl`、`gles`、`dx`、`wgpu`、`opencl` 在初始化时为每条固定调度编译独立程序，将算子类型、张量尺寸、步长、分组及 buffer 偏移作为编译常量；衰减强度仍可在运行时修改，不触发重编译。这会增加初始化工作量，换取更简单的 GPU 程序。Vulkan 保留自己的编译路径。
 
 `ort-cuda`、`ort-tensorrt`、`ort-directml`、`ort-coreml`、`ort-xnnpack` 启用的是 **ORT execution provider 支持**，不是同名原生后端。provider feature 不安装驱动，也不自动选 GPU。ORT 可以将部分算子分配到 CPU，但请求的 provider 注册失败仍报错。原生 GPU 初始化失败不会静默回退 CPU。OpenVINO 显式选择 CPU 属于设备选择而非 fallback；GPU/NPU 可用性取决于设备与计算图，NPU 可能使用较低精度。
 

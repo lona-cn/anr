@@ -1,8 +1,10 @@
-// Direct FP32 port of anr-dfn3's fixed WGSL programs. Parameter offsets are
-// supplied by Model, not a second topology. No native_* approximations.
+// Direct FP32 port of anr-dfn3's fixed WGSL programs. The host instantiates
+// this template for each Model dispatch; only attenuation words stay dynamic.
+#ifndef DFN3_COMMON
+#define DFN3_COMMON
 #pragma OPENCL FP_CONTRACT OFF
-#define ARGS __global const float *weights, __global const float *state_in, __global float *state_out, __global float *scratch, __global const uint *parameters, uint parameter_offset
-#define p(i) parameters[parameter_offset + (i)]
+#define ARGS __global const float *weights, __global const float *state_in, __global float *state_out, __global float *scratch, __global const uint *parameters
+#define p(i) DFN3_P_ ## i
 
 inline float sigmoid(float x) { return 1.0f / (1.0f + exp(-x)); }
 inline float activate(float x, uint kind) {
@@ -11,16 +13,22 @@ inline float activate(float x, uint kind) {
     if (kind == 3u) return tanh(x);
     return x;
 }
+inline float2 product(float2 x, float2 y) {
+    return (float2)(x.x * y.x - x.y * y.y, x.x * y.y + x.y * y.x);
+}
+#endif
+
+#if DFN3_SHADER == 0
 
 __attribute__((reqd_work_group_size(64, 1, 1)))
-__kernel void network(ARGS) {
+__kernel void DFN3_ENTRY(ARGS) {
+    uint index = (uint)get_global_id(0);
+#if p(0u) == 5u
     __local float gru_input[256];
     __local float gru_old_state[256];
-    uint index = (uint)get_global_id(0);
     uint lane = (uint)get_local_id(0);
-    uint mode = p(0u);
     // Barrier must precede every bounds return, even in a partial workgroup.
-    if (mode == 5u) {
+    {
         for (uint round = 0u; round < 4u; ++round) {
             uint k = lane + round * 64u;
             gru_input[k] = scratch[p(2u) + k];
@@ -54,8 +62,10 @@ __kernel void network(ARGS) {
         state_out[p(8u) + index] = value;
         return;
     }
+#else
     if (index >= p(1u)) return;
-    if (mode == 0u || mode == 1u) {
+#if p(0u) == 0u || p(0u) == 1u
+    {
         uint ow = index % p(11u);
         uint oh = (index / p(11u)) % p(10u);
         uint oc = index / (p(11u) * p(10u));
@@ -68,38 +78,40 @@ __kernel void network(ARGS) {
             uint input_channel = group * inputs_per_group + ic;
             for (uint kh = 0u; kh < p(12u); ++kh) {
                 int iy;
-                if (mode == 1u) {
-                    int t = (int)oh + (int)p(16u) - (int)kh;
-                    if (t < 0 || t % (int)p(14u) != 0) continue;
-                    iy = t / (int)p(14u);
-                } else {
-                    iy = (int)(oh * p(14u) + kh) - (int)p(16u);
-                }
+#if p(0u) == 1u
+                int t = (int)oh + (int)p(16u) - (int)kh;
+                if (t < 0 || t % (int)p(14u) != 0) continue;
+                iy = t / (int)p(14u);
+#else
+                iy = (int)(oh * p(14u) + kh) - (int)p(16u);
+#endif
                 if (iy < 0 || iy >= (int)p(7u)) continue;
                 for (uint kw = 0u; kw < p(13u); ++kw) {
                     int ix;
-                    if (mode == 1u) {
-                        int t = (int)ow + (int)p(17u) - (int)kw;
-                        if (t < 0 || t % (int)p(15u) != 0) continue;
-                        ix = t / (int)p(15u);
-                    } else {
-                        ix = (int)(ow * p(15u) + kw) - (int)p(17u);
-                    }
+#if p(0u) == 1u
+                    int t = (int)ow + (int)p(17u) - (int)kw;
+                    if (t < 0 || t % (int)p(15u) != 0) continue;
+                    ix = t / (int)p(15u);
+#else
+                    ix = (int)(ow * p(15u) + kw) - (int)p(17u);
+#endif
                     if (ix < 0 || ix >= (int)p(8u)) continue;
                     uint wi;
-                    if (mode == 1u) {
-                        wi = ((input_channel * outputs_per_group + oc % outputs_per_group)
-                            * p(12u) + kh) * p(13u) + kw;
-                    } else {
-                        wi = ((oc * inputs_per_group + ic) * p(12u) + kh) * p(13u) + kw;
-                    }
+#if p(0u) == 1u
+                    wi = ((input_channel * outputs_per_group + oc % outputs_per_group)
+                        * p(12u) + kh) * p(13u) + kw;
+#else
+                    wi = ((oc * inputs_per_group + ic) * p(12u) + kh) * p(13u) + kw;
+#endif
                     uint si = (input_channel * p(7u) + (uint)iy) * p(8u) + (uint)ix;
                     sum += scratch[p(2u) + si] * weights[p(4u) + wi];
                 }
             }
         }
         scratch[p(3u) + index] = activate(sum, p(19u));
-    } else if (mode == 2u) {
+    }
+#elif p(0u) == 2u
+    {
         uint group = index / p(8u);
         uint output_in_group = index % p(8u);
         float sum = 0.0f;
@@ -108,21 +120,27 @@ __kernel void network(ARGS) {
             sum += scratch[p(2u) + group * p(7u) + i] * weights[p(4u) + wi];
         }
         scratch[p(3u) + index] = activate(sum, p(19u));
-    } else if (mode == 3u) {
+    }
+#elif p(0u) == 3u
+    {
         scratch[p(3u) + index] = scratch[p(2u) + index] + scratch[p(4u) + index];
-    } else if (mode == 4u) {
+    }
+#elif p(0u) == 4u
+    {
         uint source;
-        if (p(8u) == 0u) {
-            uint channel = index % p(6u);
-            uint spatial = index / p(6u);
-            source = channel * p(7u) + spatial;
-        } else {
-            uint channel = index / p(7u);
-            uint spatial = index % p(7u);
-            source = spatial * p(6u) + channel;
-        }
+#if p(8u) == 0u
+        uint channel = index % p(6u);
+        uint spatial = index / p(6u);
+        source = channel * p(7u) + spatial;
+#else
+        uint channel = index / p(7u);
+        uint spatial = index % p(7u);
+        source = spatial * p(6u) + channel;
+#endif
         scratch[p(3u) + index] = scratch[p(2u) + source];
-    } else if (mode == 6u) {
+    }
+#elif p(0u) == 6u
+    {
         uint component = index % 2u;
         uint frequency = (index / 2u) % 96u;
         uint tap = index / 192u;
@@ -130,11 +148,16 @@ __kernel void network(ARGS) {
         scratch[p(3u) + index] = scratch[p(2u) + frequency * 10u + channel]
             + scratch[p(4u) + channel * 96u + frequency];
     }
+#endif
+#endif
 }
+#endif
+
+#if DFN3_SHADER == 1
 
 #define spectrum(f) ((float2)(scratch[p(6u) + 2u * (f)], scratch[p(6u) + 2u * (f) + 1u]))
 __attribute__((reqd_work_group_size(128, 1, 1)))
-__kernel void dsp(ARGS) {
+__kernel void DFN3_ENTRY(ARGS) {
     __local uint nonzero_mean;
     __local uint nonzero_norm;
     uint i = (uint)get_global_id(0);
@@ -251,11 +274,12 @@ __kernel void dsp(ARGS) {
     }
 }
 
-inline float2 product(float2 x, float2 y) {
-    return (float2)(x.x * y.x - x.y * y.y, x.x * y.y + x.y * y.x);
-}
+#undef spectrum
+#endif
+
+#if DFN3_SHADER == 2
 __attribute__((reqd_work_group_size(128, 1, 1)))
-__kernel void fft(ARGS) {
+__kernel void DFN3_ENTRY(ARGS) {
     __local float2 a[960];
     __local float2 b[960];
     const uint radix[5] = {5u, 3u, 4u, 4u, 4u};
@@ -317,3 +341,4 @@ __kernel void fft(ARGS) {
         for (uint i = lane; i < 960u; i += 128u) scratch[p(3u) + i] = b[i].x;
     }
 }
+#endif
