@@ -8,39 +8,39 @@ ANR-Lite-48 is a trainable 48 kHz speech-enhancement model implemented in **Burn
 
 This guide follows the public workflow from the model API through training, WAV rendering, and an objective comparison with DFN3. ANR-Lite is independent of the existing DFN3 inference backends: a Burn record is not ONNX, and the `anr` CLI has no ANR-Lite record backend.
 
-- [Project overview](https://github.com/lona-cn/anr/blob/v0.2.0/README.md) · [DFN3 CLI and backends](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md)
+- [Project overview](https://github.com/lona-cn/anr/blob/v0.3.0/README.md) · [DFN3 CLI and backends](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/README.md)
 - [API and streaming](#api-and-streaming) · [Data requirements](#voicebank-demand-data-requirements) · [Training](#training)
 - [Render a checkpoint](#render-a-checkpoint) · [Export DFN3](#export-dfn3-with-fixed-delay-calibration) · [Score and report](#score-and-report)
-- [Dataset sources and terms](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md) · [Complete streaming example](examples/smoke.rs)
+- [Dataset sources and terms](https://github.com/lona-cn/anr/blob/v0.3.0/datasets/DATASETS.md) · [Complete streaming example](examples/smoke.rs)
 
 ### Registry dependencies and installed tools
 
-The registry examples below are for **after v0.2.0 is published to crates.io**; versioned repository links also require the `v0.2.0` tag. Until then, use the local-checkout commands later in this guide.
+The registry examples below are for **after v0.3.0 is published to crates.io**; versioned repository links also require the `v0.3.0` tag. Until then, use the local-checkout commands later in this guide.
 
 For a library consumer, add the default CPU Flex backend to your project's `Cargo.toml`:
 
 ```toml
 [dependencies]
-anr-lite = "0.2.0"
+anr-lite = "0.3.0"
 ```
 
 Alternatively, select only the optional wgpu backend (no CPU Flex):
 
 ```toml
 [dependencies]
-anr-lite = { version = "0.2.0", default-features = false, features = ["wgpu"] }
+anr-lite = { version = "0.3.0", default-features = false, features = ["wgpu"] }
 ```
 
 Use a current stable Rust toolchain. Install both tools with the default CPU backend:
 
 ```text
-cargo install anr-lite --version 0.2.0 --locked --features train --bin anr-lite-train --bin anr-lite-evaluate
+cargo install anr-lite --version 0.3.0 --locked --features train --bin anr-lite-train --bin anr-lite-evaluate
 ```
 
 Or choose the GPU-only build instead, requiring a supported discrete GPU and drivers:
 
 ```text
-cargo install anr-lite --version 0.2.0 --locked --no-default-features --features train,wgpu --bin anr-lite-train --bin anr-lite-evaluate
+cargo install anr-lite --version 0.3.0 --locked --no-default-features --features train,wgpu --bin anr-lite-train --bin anr-lite-evaluate
 ```
 
 With Cargo's install directory on `PATH`, the installed binaries run from **any working directory**. Supply your own extracted dataset, real trained checkpoint and new output paths; no repository files, pretrained weights or dataset download are supplied. This PowerShell CPU example uses absolute paths: replace them with your paths, keep outputs outside the dataset, and choose output directories that do not already exist.
@@ -119,7 +119,7 @@ Transforms, features, network and filtering run on the chosen Burn device. This 
 
 ### VoiceBank-DEMAND data requirements
 
-Check the [dataset sources and usage terms](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md), then extract the **28-speaker, 48 kHz** release. No transcription or FFmpeg is needed. The trainer neither downloads nor modifies the corpus. Its default dataset parent is:
+Check the [dataset sources and usage terms](https://github.com/lona-cn/anr/blob/v0.3.0/datasets/DATASETS.md), then extract the **28-speaker, 48 kHz** release. No transcription or FFmpeg is needed. The trainer neither downloads nor modifies the corpus. Its default dataset parent is:
 
 ```text
 datasets/VoiceBank-DEMAND 28-speaker/
@@ -199,12 +199,12 @@ For CPU rendering, retain default `flex`, use `--features train` instead of the 
 
 ### Export DFN3 with fixed-delay calibration
 
-[The DFN3 exporter](https://github.com/lona-cn/anr/blob/v0.2.0/tools/export_dfn3_voicebank.py) runs the real `anr` executable and keeps scratch/logs outside the corpus. Prepare:
+[The DFN3 exporter](https://github.com/lona-cn/anr/blob/v0.3.0/tools/export_dfn3_voicebank.py) runs the real `anr` executable and keeps scratch/logs outside the corpus. Prepare:
 
 - The trained Lite record and the same official clean/noisy test corpus.
-- An isolated **Python 3.12** environment with the [pinned quality dependencies](https://github.com/lona-cn/anr/blob/v0.2.0/tools/requirements-anr-lite-quality.txt). Building `pesq` from source on Windows requires a compatible C/C++ build toolchain.
+- An isolated **Python 3.12** environment with the [pinned quality dependencies](https://github.com/lona-cn/anr/blob/v0.3.0/tools/requirements-anr-lite-quality.txt). Building `pesq` from source on Windows requires a compatible C/C++ build toolchain.
 - A working `anr` build for the chosen backend, with its drivers/runtime libraries. The example uses native DFN3 `wgpu`, not ORT.
-- The fixed `models/dfn3.onnx`, SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. The CLI build below does not automatically download it; see [the project overview](https://github.com/lona-cn/anr/blob/v0.2.0/README.md) for source and licensing.
+- The fixed `models/dfn3.onnx`, SHA-256 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`. The CLI build below does not automatically download it; see [the project overview](https://github.com/lona-cn/anr/blob/v0.3.0/README.md) for source and licensing.
 
 Windows environment preparation (or set `$py` to an already prepared interpreter):
 
@@ -227,7 +227,7 @@ $anr = Join-Path $cargoTarget 'release/anr.exe'
 & $py tools/export_dfn3_voicebank.py --executable $anr --model models/dfn3.onnx --input-dir "$dataset/noisy_testset_wav" --output-dir $dfnOut --backend wgpu --strength 0
 ```
 
-Use the target-triple-specific executable when explicitly cross-compiling; a native Unix executable is named `anr`. The exporter defaults to **cuda**, so keep the explicit `--backend wgpu` here. `--provider` applies only to ORT (omission is recorded as cpu); ORT needs the appropriate build/runtime from the [CLI guide](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md). `--strength` must be 0; positive `--limit` is smoke-only. Every export needs a new output directory.
+Use the target-triple-specific executable when explicitly cross-compiling; a native Unix executable is named `anr`. The exporter defaults to **cuda**, so keep the explicit `--backend wgpu` here. `--provider` applies only to ORT (omission is recorded as cpu); ORT needs the appropriate build/runtime from the [CLI guide](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/README.md). `--strength` must be 0; positive `--limit` is smoke-only. Every export needs a new output directory.
 
 **Strength 0 means pure wet, not bypass.** CLI strength maps to rounded attenuation dB; a tiny positive value may still round to 0 dB and cannot provide an identity reference. The exporter runs an independent random probe at strength 0 and at `1.6666667` (a 1 dB limit), recovers dry from `limited = (1-alpha) * wet + alpha * dry`, and verifies the full unscaled reconstruction. Relative RMS and absolute peak errors must both be at most `2e-5`.
 
@@ -237,7 +237,7 @@ Every noisy test file is padded in scratch for the tail, processed and cropped t
 
 ### Score and report
 
-[The scorer](https://github.com/lona-cn/anr/blob/v0.2.0/tools/evaluate_voicebank.py) compares the noisy baseline and enhanced directories with clean:
+[The scorer](https://github.com/lona-cn/anr/blob/v0.3.0/tools/evaluate_voicebank.py) compares the noisy baseline and enhanced directories with clean:
 
 ```powershell
 & $py tools/evaluate_voicebank.py --clean-dir "$dataset/clean_testset_wav" --noisy-dir "$dataset/noisy_testset_wav" --enhanced "anr-lite=$liteOut" --enhanced "dfn3=$dfnOut" --output-dir $scoresOut --workers 8 --bootstrap-samples 2000 --seed 42
@@ -271,39 +271,39 @@ Keep training configuration/splits, selected checkpoint, both rendering manifest
 
 本指南覆盖从模型 API、数据准备到训练、音频导出和 DFN3 客观对比的完整流程。ANR-Lite 与项目现有的 DFN3 推理后端相互独立：Burn record 不是 ONNX，`anr` CLI 不会选择或自动加载 ANR-Lite 权重。
 
-- [项目入口](https://github.com/lona-cn/anr/blob/v0.2.0/README.md)
-- [DFN3 CLI 与后端配置](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md)
-- [数据集来源与使用条件](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md)
+- [项目入口](https://github.com/lona-cn/anr/blob/v0.3.0/README.md)
+- [DFN3 CLI 与后端配置](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/README.md)
+- [数据集来源与使用条件](https://github.com/lona-cn/anr/blob/v0.3.0/datasets/DATASETS.md)
 - [完整流式示例](examples/smoke.rs)
 
 ### crates.io 依赖与已安装工具
 
-以下 registry 示例供 **v0.2.0 发布到 crates.io 后**使用；带版本的仓库链接也需要 `v0.2.0` tag。发布前可使用本指南后面的本地 checkout 命令。
+以下 registry 示例供 **v0.3.0 发布到 crates.io 后**使用；带版本的仓库链接也需要 `v0.3.0` tag。发布前可使用本指南后面的本地 checkout 命令。
 
 库调用方在自己项目的 `Cargo.toml` 中添加依赖，默认启用 CPU Flex 后端：
 
 ```toml
 [dependencies]
-anr-lite = "0.2.0"
+anr-lite = "0.3.0"
 ```
 
 也可改为仅启用可选的 wgpu 后端（不编入 CPU Flex）：
 
 ```toml
 [dependencies]
-anr-lite = { version = "0.2.0", default-features = false, features = ["wgpu"] }
+anr-lite = { version = "0.3.0", default-features = false, features = ["wgpu"] }
 ```
 
 使用当前 stable Rust。以下命令安装两个工具，默认使用 CPU 后端：
 
 ```text
-cargo install anr-lite --version 0.2.0 --locked --features train --bin anr-lite-train --bin anr-lite-evaluate
+cargo install anr-lite --version 0.3.0 --locked --features train --bin anr-lite-train --bin anr-lite-evaluate
 ```
 
 如果只使用 GPU，改用以下安装命令，需要受支持的独立 GPU 和驱动：
 
 ```text
-cargo install anr-lite --version 0.2.0 --locked --no-default-features --features train,wgpu --bin anr-lite-train --bin anr-lite-evaluate
+cargo install anr-lite --version 0.3.0 --locked --no-default-features --features train,wgpu --bin anr-lite-train --bin anr-lite-evaluate
 ```
 
 将 Cargo 安装目录加入 `PATH` 后，已安装的程序可从**任意工作目录**运行。须自行提供已解压数据集、实际训练得到的 checkpoint 和新的输出路径；安装不附仓库文件、预训练权重或数据集下载。下面是使用绝对路径的 PowerShell CPU 示例：替换为自己的路径，输出须位于数据集之外，且输出目录不得已存在。
@@ -420,7 +420,7 @@ fn load_model(path: &Path, device: &Device) -> Result<AnrLite48, Box<dyn Error>>
 
 ### VoiceBank-DEMAND 数据要求
 
-先按[数据集目录](https://github.com/lona-cn/anr/blob/v0.2.0/datasets/DATASETS.md)核对来源和使用条件，再解压 28-speaker、48 kHz 版本。训练器不下载、不修改数据，不需要文本转录，也不依赖 FFmpeg。默认 `--dataset` 为 `datasets/VoiceBank-DEMAND 28-speaker`，目录必须为：
+先按[数据集目录](https://github.com/lona-cn/anr/blob/v0.3.0/datasets/DATASETS.md)核对来源和使用条件，再解压 28-speaker、48 kHz 版本。训练器不下载、不修改数据，不需要文本转录，也不依赖 FFmpeg。默认 `--dataset` 为 `datasets/VoiceBank-DEMAND 28-speaker`，目录必须为：
 
 ```text
 datasets/VoiceBank-DEMAND 28-speaker/
@@ -530,12 +530,12 @@ CPU 导出改用 `--features train`（保留默认 `flex`），并传 `--device 
 
 ### DFN3 固定延迟校准与导出
 
-[export_dfn3_voicebank.py](https://github.com/lona-cn/anr/blob/v0.2.0/tools/export_dfn3_voicebank.py)调用实际 `anr` 可执行文件，在数据集外创建 scratch 和日志。先准备：
+[export_dfn3_voicebank.py](https://github.com/lona-cn/anr/blob/v0.3.0/tools/export_dfn3_voicebank.py)调用实际 `anr` 可执行文件，在数据集外创建 scratch 和日志。先准备：
 
 - 已训练的 ANR-Lite checkpoint，以及同一份官方 test clean/noisy 数据；
-- Python 3.12 独立环境及[固定依赖](https://github.com/lona-cn/anr/blob/v0.2.0/tools/requirements-anr-lite-quality.txt)；Windows 从源码构建 `pesq` 时需要匹配的 C/C++ 编译工具链；
+- Python 3.12 独立环境及[固定依赖](https://github.com/lona-cn/anr/blob/v0.3.0/tools/requirements-anr-lite-quality.txt)；Windows 从源码构建 `pesq` 时需要匹配的 C/C++ 编译工具链；
 - 已构建并可运行所选后端的 `anr`，以及驱动/运行库；下例明确使用原生 DFN3 `wgpu`，不需要 ORT；
-- 项目固定的 `models/dfn3.onnx`，SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。这个 `--no-default-features` CLI 构建不会自动下载模型；来源和许可见[项目说明](https://github.com/lona-cn/anr/blob/v0.2.0/README.md)。
+- 项目固定的 `models/dfn3.onnx`，SHA-256 必须为 `fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。这个 `--no-default-features` CLI 构建不会自动下载模型；来源和许可见[项目说明](https://github.com/lona-cn/anr/blob/v0.3.0/README.md)。
 
 为质量工具新建隔离环境的 Windows 示例；已有合适环境可直接设置 `$py`，不必重复安装：
 
@@ -558,7 +558,7 @@ $anr = Join-Path $cargoTarget 'release/anr.exe'
 & $py tools/export_dfn3_voicebank.py --executable $anr --model models/dfn3.onnx --input-dir "$dataset/noisy_testset_wav" --output-dir $dfnOut --backend wgpu --strength 0
 ```
 
-若显式交叉编译，需使用对应 target triple 下的程序；Unix 原生程序名为 `anr`。导出器参数为必填 `--executable`、`--model`、`--input-dir`、`--output-dir`，以及 `--backend`（默认 **cuda**，本例明确覆盖）、`--provider`（仅 ORT）、`--strength`（必须为 0）和正数 `--limit`（仅 smoke）。使用 ORT 时还须按 [CLI 指南](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/README.md)准备对应构建和运行库；省略 provider 记录为 cpu。
+若显式交叉编译，需使用对应 target triple 下的程序；Unix 原生程序名为 `anr`。导出器参数为必填 `--executable`、`--model`、`--input-dir`、`--output-dir`，以及 `--backend`（默认 **cuda**，本例明确覆盖）、`--provider`（仅 ORT）、`--strength`（必须为 0）和正数 `--limit`（仅 smoke）。使用 ORT 时还须按 [CLI 指南](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/README.md)准备对应构建和运行库；省略 provider 记录为 cpu。
 
 #### 校准为何独立于 clean 目标
 
@@ -570,7 +570,7 @@ DFN3 的 `strength` 映射到取整后的 attenuation dB，**不是直接的 dB 
 
 ### 客观指标与完整评估规则
 
-[evaluate_voicebank.py](https://github.com/lona-cn/anr/blob/v0.2.0/tools/evaluate_voicebank.py)将 noisy baseline 和一个或多个增强目录与 clean 配对评分：
+[evaluate_voicebank.py](https://github.com/lona-cn/anr/blob/v0.3.0/tools/evaluate_voicebank.py)将 noisy baseline 和一个或多个增强目录与 clean 配对评分：
 
 ```powershell
 & $py tools/evaluate_voicebank.py --clean-dir "$dataset/clean_testset_wav" --noisy-dir "$dataset/noisy_testset_wav" --enhanced "anr-lite=$liteOut" --enhanced "dfn3=$dfnOut" --output-dir $scoresOut --workers 8 --bootstrap-samples 2000 --seed 42

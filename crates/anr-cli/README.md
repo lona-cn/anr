@@ -10,7 +10,7 @@
 
 #### Application ZIP
 
-The [release workflow](https://github.com/lona-cn/anr/blob/v0.2.0/.github/workflows/ci.yml) packages Windows x64, Linux x64, macOS arm64, and macOS x64 applications as `anr-<version-or-commit>-<target>.zip`. Each package contains the executable, CPU ONNX Runtime **1.28.0**, `models/dfn3.onnx`, and licenses/notices. The separate [model release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains model assets, not the CLI.
+The [release workflow](https://github.com/lona-cn/anr/blob/v0.3.0/.github/workflows/ci.yml) packages Windows x64, Linux x64, macOS arm64, and macOS x64 applications as `anr-<version-or-commit>-<target>.zip`. Each package contains the executable, CPU ONNX Runtime **1.28.0**, `models/dfn3.onnx`, and licenses/notices. The separate [model release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) contains model assets, not the CLI.
 
 When using a packaged build, verify its attached `SHA256SUMS`, extract the entire archive, and run:
 
@@ -23,14 +23,14 @@ On Windows, use `.\anr.exe`. Keep the runtime libraries and `models/` beside the
 - Windows may require the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 - Linux packages are glibc builds produced on Ubuntu 24.04, not musl builds or a promise of compatibility with older glibc.
 - macOS packages use ad-hoc signing, not notarization; follow the system's approval procedure for downloaded applications.
-- These packages contain CPU ORT, not GPU providers or native vendor SDKs. Packaging configuration is not a record of platform test results; see [RELEASING.md](https://github.com/lona-cn/anr/blob/v0.2.0/RELEASING.md) for the release procedure.
+- These packages contain CPU ORT, not GPU providers or native vendor SDKs. Packaging configuration is not a record of platform test results; see [RELEASING.md](https://github.com/lona-cn/anr/blob/v0.3.0/RELEASING.md) for the release procedure.
 
 #### Source installation
 
-Use the latest stable Rust toolchain. **After v0.2.0 is published to crates.io**, install from registry source (not a prebuilt application):
+Use the latest stable Rust toolchain. **After v0.3.0 is published to crates.io**, install from registry source (not a prebuilt application):
 
 ```text
-cargo install anr-cli --version 0.2.0 --locked
+cargo install anr-cli --version 0.3.0 --locked
 ```
 
 Alternatively, install from a source checkout's workspace root:
@@ -43,11 +43,11 @@ anr backends --json
 
 The executable is named `anr`, not `anr-cli`; put Cargo's installation directory on `PATH`. Source builds need the platform linker/toolchain: MSVC C++ tools and Windows SDK on Windows, C/C++ linking tools plus `pkg-config` and OpenSSL development files (such as `libssl-dev`) on Linux, or Xcode Command Line Tools on macOS. Default features download a prebuilt CPU ORT runtime where available and prepare the model, so a first build normally needs network access. For Intel macOS, use the supplied-runtime installation below instead.
 
-**Intel macOS needs a supplied or source-built ORT runtime**, rather than assuming a prebuilt runtime is available. For example, after obtaining an API-27-compatible CPU shared library (including ONNX Runtime 1.28.0), set its path and install from crates.io **after v0.2.0 publication**:
+**Intel macOS needs a supplied or source-built ORT runtime**, rather than assuming a prebuilt runtime is available. For example, after obtaining an API-27-compatible CPU shared library (including ONNX Runtime 1.28.0), set its path and install from crates.io **after v0.3.0 publication**:
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
-cargo install anr-cli --version 0.2.0 --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
+cargo install anr-cli --version 0.3.0 --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
 anr backends --json
 ```
 
@@ -83,7 +83,7 @@ Default features are `ort-download-binaries`, `download-models`, and `copy-model
 - Set `ANR_MODEL_PATH` to a local model **before building** to bypass downloading; `copy-models` alone requires this setting. Use an absolute path for reproducible builds. A cold cache with `CARGO_NET_OFFLINE=true` fails instead of downloading.
 - `cargo install` can use the persistent build-time model source. For relocation to another machine, ship the model beside the executable with its licenses/notices; the build machine's cache is not portable.
 
-Disabling default features removes automatic model preparation as well as default ORT support. See the [library reference](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md) for model preparation and the [ORT reference](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md) for the accepted model port contract. Native backends require this exact original model SHA-256:
+Disabling default features removes automatic model preparation as well as default ORT support. See the [library reference](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr/README.md) for model preparation and the [ORT reference](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-ort/README.md) for the accepted model port contract. Native backends require this exact original model SHA-256:
 
 ```text
 fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9
@@ -133,7 +133,7 @@ Output is WAV (PCM16, PCM24, or float32) or raw f32le; there are no MP3/AAC enco
 
 The pipeline preserves channel count/order without mixing. It uses bounded streaming buffers, resamples to DFN3's **48 kHz / 480-sample** frames, and resamples to the requested output rate. Equal-rate stages bypass resampling. Samples accumulate across decoder packets; only the last model frame is zero-padded at EOF, and padding is trimmed.
 
-Output length is based on **actually decoded frames**, not a header estimate: at the original rate, exactly the input frame count; with a rate change, `round(input_frames × output_rate / input_rate)` (half up). Here a frame is one sample per channel at the same instant. Resampler filter delay is compensated and its tail drained. **DFN3's own algorithmic latency is not compensated**, and the backend exposes no model end-of-stream flush. Equal length does not imply latency-free processing. See [DESIGN.md](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/DESIGN.md) for the stream architecture.
+Output length is based on **actually decoded frames**, not a header estimate: at the original rate, exactly the input frame count; with a rate change, `round(input_frames × output_rate / input_rate)` (half up). Here a frame is one sample per channel at the same instant. Resampler filter delay is compensated and its tail drained. **DFN3's own algorithmic latency is not compensated**, and the backend exposes no model end-of-stream flush. Equal length does not imply latency-free processing. See [DESIGN.md](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/DESIGN.md) for the stream architecture.
 
 ### Binary-safe raw streams
 
@@ -195,7 +195,7 @@ Cancellation unwinds the processing loop and removes the current temporary file;
 | `openvino` | `--backend openvino [--openvino-device CPU]` | OpenVINO C++ SDK and C++17 compiler at build time; Runtime, ONNX frontend, device plugin and dependencies at runtime. |
 | `opencl` | `--backend opencl` | OpenCL ICD loader plus hardware GPU vendor runtime/driver with OpenCL C 1.2+, online compiler, and required FP32/device capabilities. No build-time SDK required. |
 
-Features add support; they do not install vendor SDKs or drivers. ORT permits per-operator CPU placement alongside GPU providers; explicit provider registration/initialization failures remain errors. Native GPU backends do not select software/CPU fallback. OpenVINO's default is explicitly CPU; requested GPU/NPU failures remain errors, and NPU arithmetic is device-dependent. CUDA/TensorRT/DirectML ORT sessions prepare the graph in memory through `anr-ort`, without changing the source model or requiring Python; see the [ORT reference](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md). GPU in-memory loading currently requires a UTF-8 model directory for external-weight resolution.
+Features add support; they do not install vendor SDKs or drivers. ORT permits per-operator CPU placement alongside GPU providers; explicit provider registration/initialization failures remain errors. Native GPU backends do not select software/CPU fallback. OpenVINO's default is explicitly CPU; requested GPU/NPU failures remain errors, and NPU arithmetic is device-dependent. CUDA/TensorRT/DirectML ORT sessions prepare the graph in memory through `anr-ort`, without changing the source model or requiring Python; see the [ORT reference](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-ort/README.md). GPU in-memory loading currently requires a UTF-8 model directory for external-weight resolution.
 
 Known OpenVINO GPU compatibility issue: compilation of the original graph has failed at `NonZero_1_count` / `count_nonzero` kernel selection. Selecting a GPU does not bypass unsupported operators; NPU support likewise depends on the installed plugin and device.
 
@@ -228,11 +228,11 @@ For custom deployment:
 - On Windows, TensorRT searches imported DLL names in the shim directory, executable directory, existing absolute `PATH` entries, then recorded SDK directories, deduplicated in that order. Explicit `ANR_TENSORRT_RUNTIME` and `CUDA_ROOT` / `CUDA_PATH` take precedence; invalid overrides fail rather than selecting an unrelated installation. Empty/relative `PATH` entries do not enable current-directory search; the loader does not rewrite `PATH`.
 - Shared ORT linking may need `ORT_PREFER_DYNAMIC_LINK=1` and the platform library search path in addition to `ORT_LIB_LOCATION`. Dynamic loading failures return exit code 1 before output creation.
 
-Hardware-dependent tests are opt-in: set `ANR_DFN3_MODEL` and use `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`, selecting only locally supported features and adding SDK features only with their SDKs configured. These tests cover stream/file behavior, not perceptual quality or universal device compatibility. [benchmark.md](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md) records performance measurements separately.
+Hardware-dependent tests are opt-in: set `ANR_DFN3_MODEL` and use `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`, selecting only locally supported features and adding SDK features only with their SDKs configured. These tests cover stream/file behavior, not perceptual quality or universal device compatibility. [benchmark.md](https://github.com/lona-cn/anr/blob/v0.3.0/benchmark.md) records performance measurements separately.
 
 ### License
 
-Project code is **MIT OR Apache-2.0**: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model provenance and the supplied asset's authorization are documented in the [model notice](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md). Dependencies, runtimes, models, and SDKs retain their own terms; redistribution and source-availability obligations are collected in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Project code is **MIT OR Apache-2.0**: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model provenance and the supplied asset's authorization are documented in the [model notice](https://github.com/lona-cn/anr/blob/v0.3.0/.github/models/NOTICE.md). Dependencies, runtimes, models, and SDKs retain their own terms; redistribution and source-availability obligations are collected in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## 简体中文
 
@@ -242,7 +242,7 @@ Project code is **MIT OR Apache-2.0**: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APAC
 
 #### 应用 ZIP
 
-[发布工作流](https://github.com/lona-cn/anr/blob/v0.2.0/.github/workflows/ci.yml) 为 Windows x64、Linux x64、macOS arm64 和 macOS x64 打包 `anr-<版本或提交>-<target>.zip`，包含可执行文件、CPU ONNX Runtime **1.28.0**、`models/dfn3.onnx` 和许可/通知。独立的[模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 只提供模型资产，不是 CLI。
+[发布工作流](https://github.com/lona-cn/anr/blob/v0.3.0/.github/workflows/ci.yml) 为 Windows x64、Linux x64、macOS arm64 和 macOS x64 打包 `anr-<版本或提交>-<target>.zip`，包含可执行文件、CPU ONNX Runtime **1.28.0**、`models/dfn3.onnx` 和许可/通知。独立的[模型 Release](https://github.com/lona-cn/anr/releases/tag/model-dfn3-fe5eb64fa2e4) 只提供模型资产，不是 CLI。
 
 使用打包版本时，先核对附带的 `SHA256SUMS`，完整解压后运行：
 
@@ -255,14 +255,14 @@ Windows 使用 `.\anr.exe`。运行库和 `models/` 应保留在可执行文件�
 - Windows 可能需要 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)。
 - Linux 包在 Ubuntu 24.04 上构建，使用 glibc，不是 musl 包，也不保证兼容更旧的 glibc。
 - macOS 包使用 ad-hoc 签名，未公证；下载后按系统要求完成允许打开的操作。
-- 包内只有 CPU ORT，不包含 GPU provider 或原生厂商 SDK。打包配置不等于平台测试结果；发布流程见 [RELEASING.md](https://github.com/lona-cn/anr/blob/v0.2.0/RELEASING.md)。
+- 包内只有 CPU ORT，不包含 GPU provider 或原生厂商 SDK。打包配置不等于平台测试结果；发布流程见 [RELEASING.md](https://github.com/lona-cn/anr/blob/v0.3.0/RELEASING.md)。
 
 #### 从源码安装
 
-使用最新 Rust stable。**v0.2.0 发布到 crates.io 后**，可从注册表源码安装（不是预编译应用）：
+使用最新 Rust stable。**v0.3.0 发布到 crates.io 后**，可从注册表源码安装（不是预编译应用）：
 
 ```text
-cargo install anr-cli --version 0.2.0 --locked
+cargo install anr-cli --version 0.3.0 --locked
 ```
 
 也可以在源码 checkout 的工作区根目录执行：
@@ -275,11 +275,11 @@ anr backends --json
 
 二进制名为 `anr`，不是 `anr-cli`；将 Cargo 安装目录加入 `PATH`。构建依赖平台工具链：Windows 需要 MSVC C++ 工具和 Windows SDK；Linux 需要 C/C++ 链接工具、`pkg-config` 和 OpenSSL 开发文件（例如 `libssl-dev`）；macOS 需要 Xcode Command Line Tools。默认 features 在有预编译 CPU ORT 的平台下载运行库并准备模型，首次构建通常需要联网。Intel macOS 请改用下方的自备运行库安装方式。
 
-**Intel macOS 需要自备或源码构建 ORT 运行库**，不能假定有预编译版本。准备好兼容 API 27 的 CPU 共享库（包括 ONNX Runtime 1.28.0）后，设置库路径，并在 **v0.2.0 发布后**从 crates.io 安装，例如：
+**Intel macOS 需要自备或源码构建 ORT 运行库**，不能假定有预编译版本。准备好兼容 API 27 的 CPU 共享库（包括 ONNX Runtime 1.28.0）后，设置库路径，并在 **v0.3.0 发布后**从 crates.io 安装，例如：
 
 ```sh
 export ORT_DYLIB_PATH="/absolute/path/to/libonnxruntime.dylib"
-cargo install anr-cli --version 0.2.0 --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
+cargo install anr-cli --version 0.3.0 --locked --no-default-features --features ort-load-dynamic,download-models,copy-models
 anr backends --json
 ```
 
@@ -315,7 +315,7 @@ anr denoise --help
 - **构建前**将 `ANR_MODEL_PATH` 指向本地模型可跳过下载；单独启用 `copy-models` 时必须设置。建议使用绝对路径保证构建可复现。缓存缺失且 `CARGO_NET_OFFLINE=true` 时直接报错。
 - `cargo install` 可使用持久的构建时模型源路径。迁移到另一机器时，应在可执行文件旁提供模型及其许可/通知，不能依赖原机器缓存。
 
-关闭默认 features 会同时去掉自动模型准备和默认 ORT 支持。模型准备见[库参考](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md)，ORT 模型端口要求见 [ORT 参考](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md)。原生后端要求原模型精确匹配以下 SHA-256：
+关闭默认 features 会同时去掉自动模型准备和默认 ORT 支持。模型准备见[库参考](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr/README.md)，ORT 模型端口要求见 [ORT 参考](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-ort/README.md)。原生后端要求原模型精确匹配以下 SHA-256：
 
 ```text
 fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9
@@ -365,7 +365,7 @@ anr denoise INPUT... --output-dir DIR [OPTIONS]
 
 管线保留声道数量和排列，不自动混音，使用有界流式缓冲，转换到 DFN3 的 **48 kHz / 480 采样**帧，再转到输出采样率；同采样率阶段绕过重采样。解码包之间积攒模型帧，只在 EOF 补最后一帧，随后裁掉补零。
 
-输出长度按**实际解码帧数**而非头部估算计算：原采样率下等于输入帧数，换采样率时为 `round(输入帧数 × 输出采样率 / 输入采样率)`（半入）。这里一帧指同一时刻每声道各一个采样。重采样滤波延迟会补偿，并排出滤波尾部；**DFN3 自身算法延迟不补偿**，后端也没有模型流尾 flush 接口。等长不等于零延迟。管线架构见 [DESIGN.md](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/DESIGN.md)。
+输出长度按**实际解码帧数**而非头部估算计算：原采样率下等于输入帧数，换采样率时为 `round(输入帧数 × 输出采样率 / 输入采样率)`（半入）。这里一帧指同一时刻每声道各一个采样。重采样滤波延迟会补偿，并排出滤波尾部；**DFN3 自身算法延迟不补偿**，后端也没有模型流尾 flush 接口。等长不等于零延迟。管线架构见 [DESIGN.md](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/DESIGN.md)。
 
 ### 二进制安全的 raw 流
 
@@ -427,7 +427,7 @@ with open("input.f32le", "rb") as source, open("clean.f32le", "wb") as target:
 | `openvino` | `--backend openvino [--openvino-device CPU]` | 构建需 OpenVINO C++ SDK 与 C++17 编译器；运行需 Runtime、ONNX frontend、设备 plugin 及依赖。 |
 | `opencl` | `--backend opencl` | OpenCL ICD loader 和硬件 GPU 厂商运行库/驱动，支持 OpenCL C 1.2+、在线编译及所需 FP32/设备能力；构建不需 SDK。 |
 
-features 只编入支持，不安装 SDK 或驱动。ORT 允许 GPU provider 与逐算子 CPU 分配共存，显式 provider 注册/初始化失败仍报错。原生 GPU 后端不选择软件/CPU 回退。OpenVINO 默认明确选 CPU，请求 GPU/NPU 失败不回退，NPU 运算精度取决于设备。ORT CUDA/TensorRT/DirectML session 通过 `anr-ort` 在内存准备图，不改原模型，也不需 Python；见 [ORT 参考](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-ort/README.md)。GPU 内存加载目前要求模型目录可表示为 UTF-8，以解析外部权重。
+features 只编入支持，不安装 SDK 或驱动。ORT 允许 GPU provider 与逐算子 CPU 分配共存，显式 provider 注册/初始化失败仍报错。原生 GPU 后端不选择软件/CPU 回退。OpenVINO 默认明确选 CPU，请求 GPU/NPU 失败不回退，NPU 运算精度取决于设备。ORT CUDA/TensorRT/DirectML session 通过 `anr-ort` 在内存准备图，不改原模型，也不需 Python；见 [ORT 参考](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-ort/README.md)。GPU 内存加载目前要求模型目录可表示为 UTF-8，以解析外部权重。
 
 已知 OpenVINO GPU 兼容性问题：原图编译曾在 `NonZero_1_count` / `count_nonzero` kernel 选择处失败。选择 GPU 不会绕过不支持的算子；NPU 支持同样取决于安装的 plugin 和设备。
 
@@ -460,8 +460,8 @@ TensorRT 可用 `CUDA_PATH` 代替 `CUDA_ROOT`，并以 `TENSORRT_LIB_DIR` / `CU
 - Windows TensorRT 按实际导入 DLL 名依次搜索 shim 目录、可执行文件目录、现存绝对 `PATH` 目录和构建时 SDK 目录，并去重。显式 `ANR_TENSORRT_RUNTIME`、`CUDA_ROOT` / `CUDA_PATH` 优先，配置错误直接失败，不改选其他安装。空/相对 `PATH` 不启用当前目录搜索，loader 不改写 `PATH`。
 - ORT 共享链接除 `ORT_LIB_LOCATION` 外可能需要 `ORT_PREFER_DYNAMIC_LINK=1` 和平台库搜索路径。动态库加载失败在创建输出前返回 1。
 
-硬件测试需主动启用：设置 `ANR_DFN3_MODEL`，使用 `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`，只选本机支持的 features；SDK 后端在配置对应 SDK 后再加入。测试覆盖流/文件行为，不代表感知音质或所有设备兼容性。性能记录单列于 [benchmark.md](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md)。
+硬件测试需主动启用：设置 `ANR_DFN3_MODEL`，使用 `cargo test -p anr-cli --release --no-default-features --features gl,gles,vk,wgpu,dx,cuda,opencl --test cli compute_ -- --include-ignored`，只选本机支持的 features；SDK 后端在配置对应 SDK 后再加入。测试覆盖流/文件行为，不代表感知音质或所有设备兼容性。性能记录单列于 [benchmark.md](https://github.com/lona-cn/anr/blob/v0.3.0/benchmark.md)。
 
 ### 许可
 
-项目代码采用 **MIT OR Apache-2.0**：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。所提供模型的来源和授权见[模型通知](https://github.com/lona-cn/anr/blob/v0.2.0/.github/models/NOTICE.md)。依赖、运行库、模型和 SDK 保留各自条款；再分发及源码提供义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+项目代码采用 **MIT OR Apache-2.0**：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。所提供模型的来源和授权见[模型通知](https://github.com/lona-cn/anr/blob/v0.3.0/.github/models/NOTICE.md)。依赖、运行库、模型和 SDK 保留各自条款；再分发及源码提供义务见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

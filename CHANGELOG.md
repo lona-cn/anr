@@ -2,7 +2,14 @@
 
 版本按工作区版本号记录；标为“尚未发布”的条目不代表已上传 crates.io 或发布 GitHub 应用包。应用包发布流程见 [RELEASING.md](RELEASING.md)。
 
-## 尚未发布
+## 0.3.0
+
+### 升级说明
+
+- 全部 16 个 crate 及内部依赖统一升级为 `0.3.0`；第三方依赖版本不变。使用 `0.2` 依赖要求的应用需要显式升级到 `0.3`。
+- `anr-dfn3::shaders::{glsl, glsl_es, hlsl}` 改为接收 `&Dispatch`，不再接收 `ShaderKind`，调用方需传入完整调度参数。顶层 `NoiseReduction` 与各后端 `DFN3` 的处理、强度和重置 API 不变。
+
+### 推理性能
 
 - `anr-vk` 按固定 Network 算子与 shape 编译 shader，相同形状复用 pipeline，保留 buffer 偏移和衰减强度的动态读取；逐帧处理不编译、不选型。
 - `VK_KHR_cooperative_matrix` pointwise 路径改为初始化时逐层实测，仅在快于 FP32 时启用；缺少 feature、矩阵尺寸或 GPU timestamp 的设备继续使用原 FP32 pointwise 实现，Vulkan 1.1 最低要求不变。
@@ -11,6 +18,10 @@
 - Vulkan 结果回读优先选择 `HOST_CACHED` 内存，仍要求 `HOST_COHERENT` 和兼容的 memory type；没有 cached 类型时保留原选择，不增加最低硬件要求，也不改成 busy-spin 等待。
 - 补充编译后 SPIR-V 的 feature/共享内存同步检查，以及真实 GPU 的原路径对照、完整/尾部 tile、half 范围与抵消输入、五层 GRU 独立 f64 对照和连续音频回归；现有 reference 误差门槛不变。
 - `gl`、`gles`、`dx`、`wgpu`、`opencl` 改为逐调度编译固定参数 shader/kernel，算子类型、shape、stride、padding、group 和 buffer 偏移不再依赖运行时参数读取；仅保留衰减强度的动态参数。原 WGSL 运算体、FP32 表达式与状态布局不变，代价是初始化时编译更多程序。
+
+### ANR-Lite 训练
+
+- 训练默认 batch size 从 8 改为 160，片段长度从 2 秒改为 4 秒；CPU 示例继续显式使用 batch size 8。默认配置可能超出 GPU 显存，需要调用方减小 `--batch-size`，不会自动调整或回退 CPU。
 
 ## 0.2.0
 

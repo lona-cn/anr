@@ -4,16 +4,16 @@
 
 ## English
 
-Stateful DeepFilterNet3 (DFN3) inference with ONNX Runtime: **48 kHz, mono `f32` audio**, processed in 480-sample frames. This crate provides the ORT session wrapper and model preparation APIs; it does not decode audio, resample, or download models. The [`anr` facade](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md) adds model discovery and independent native backends. Requires the latest stable Rust toolchain.
+Stateful DeepFilterNet3 (DFN3) inference with ONNX Runtime: **48 kHz, mono `f32` audio**, processed in 480-sample frames. This crate provides the ORT session wrapper and model preparation APIs; it does not decode audio, resample, or download models. The [`anr` facade](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr/README.md) adds model discovery and independent native backends. Requires the latest stable Rust toolchain.
 
 ### CPU quickstart
 
-After `0.2.0` is published to crates.io, add:
+After `0.3.0` is published to crates.io, add:
 
 ```toml
 [dependencies]
-anr-core = "0.2.0"
-anr-ort = "0.2.0"
+anr-core = "0.3.0"
+anr-ort = "0.3.0"
 ```
 
 ```rust,no_run
@@ -54,7 +54,7 @@ A supplied library must expose API 27 and provide the operators/providers the ap
 For a supplied runtime:
 
 ```toml
-anr-ort = { version = "0.2.0", default-features = false, features = ["load-dynamic"] }
+anr-ort = { version = "0.3.0", default-features = false, features = ["load-dynamic"] }
 ```
 
 Set `ORT_DYLIB_PATH` to the shared-library **file**, then call `initialize_runtime()` before `ort::init().build()`. Unset or empty uses the platform-default name (`onnxruntime.dll`, `libonnxruntime.so`, or `libonnxruntime.dylib`). The helper returns loading failures, permits retries after failed loads, and reuses an already loaded library. In linked builds it is a no-op. It does not create an `Environment`; the application configures, builds, and retains that environment for session creation.
@@ -141,7 +141,7 @@ Unlike the native compute implementations, this crate does not require one file 
 - Keep one reducer per continuous channel/stream. `reset()` clears state and preserves strength.
 - `run` accepts any nonzero input length at 48,000 Hz with equal-length output. Each short final frame is zero-padded to 480 samples; padding advances a full frame of state, while only requested samples are returned. Prefer multiples of 480 between calls.
 - There is no model-latency compensation or end-of-stream flush. Audio decoding, channel separation, and resampling belong to the application.
-- Empty input, wrong rate, and unequal lengths return shared validation errors without changing output/state. Inference failures may leave earlier output written and state partly advanced. Reset before reuse; recreate if the runtime/session is no longer usable. See [`anr-core`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-core/README.md) for error variants.
+- Empty input, wrong rate, and unequal lengths return shared validation errors without changing output/state. Inference failures may leave earlier output written and state partly advanced. Reset before reuse; recreate if the runtime/session is no longer usable. See [`anr-core`](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-core/README.md) for error variants.
 
 Initial attenuation is **3 dB** (`factor() == 5`). `set_factor` clamps to `0..=100` and sets `round(factor / 100 * 60)` dB. `factor()` converts the actual dB setting back to the percentage scale and rounds, so readback may differ from the supplied value. `set_atten_lim_db` / `get_atten_lim_db` access `0..=60` dB directly and preserve fractional dB. Both setters ignore NaN and saturate infinities at the nearest bound.
 
@@ -149,20 +149,20 @@ Strength is an attenuation limit, not output gain or a dry/wet mix. Zero still r
 
 ### License
 
-MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model weights, ONNX Runtime, and provider dependencies have separate terms. ONNX parsing uses unmodified `onnx-protobuf` 0.2.3 (MPL-2.0) and `protobuf` 3.4.0 (MIT); see the [third-party notices](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/THIRD-PARTY-NOTICES.md) for source and distribution requirements.
+MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE). Model weights, ONNX Runtime, and provider dependencies have separate terms. ONNX parsing uses unmodified `onnx-protobuf` 0.2.3 (MPL-2.0) and `protobuf` 3.4.0 (MIT); see the [third-party notices](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/THIRD-PARTY-NOTICES.md) for source and distribution requirements.
 
 ## 简体中文
 
-`anr-ort` 使用 ONNX Runtime 执行有状态的 DeepFilterNet3（DFN3）推理：**48 kHz、单声道 `f32` 音频**，每帧 480 个采样。本包负责 ORT Session 封装和模型准备，不解码音频、不重采样，也不下载模型。[`anr` facade](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md) 另提供模型查找和独立原生后端。需要最新 Rust stable 工具链。
+`anr-ort` 使用 ONNX Runtime 执行有状态的 DeepFilterNet3（DFN3）推理：**48 kHz、单声道 `f32` 音频**，每帧 480 个采样。本包负责 ORT Session 封装和模型准备，不解码音频、不重采样，也不下载模型。[`anr` facade](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr/README.md) 另提供模型查找和独立原生后端。需要最新 Rust stable 工具链。
 
 ### CPU 入门
 
-`0.2.0` 发布到 crates.io 后，添加以下依赖：
+`0.3.0` 发布到 crates.io 后，添加以下依赖：
 
 ```toml
 [dependencies]
-anr-core = "0.2.0"
-anr-ort = "0.2.0"
+anr-core = "0.3.0"
+anr-ort = "0.3.0"
 ```
 
 ```rust,no_run
@@ -202,7 +202,7 @@ fn main() -> Result<()> {
 使用自备运行库：
 
 ```toml
-anr-ort = { version = "0.2.0", default-features = false, features = ["load-dynamic"] }
+anr-ort = { version = "0.3.0", default-features = false, features = ["load-dynamic"] }
 ```
 
 将 `ORT_DYLIB_PATH` 设为共享库**文件**，在 `ort::init().build()` 前调用 `initialize_runtime()`。未设置或为空时使用平台默认库名：`onnxruntime.dll`、`libonnxruntime.so` 或 `libonnxruntime.dylib`。该函数正常返回加载错误，失败后可重试，已加载的库会复用；链接构建中不执行操作。它不创建 `Environment`，环境由应用配置、创建并持有，供 Session 使用。
@@ -253,7 +253,7 @@ CUDA 展开 `FusedConv(Sigmoid)`，保留其支持的 ReLU 卷积和矩阵融合
 - 每路连续音频/声道使用独立实例；`reset()` 清除状态，保留强度。
 - `run` 接受任意非零长度的 48,000 Hz 输入，输出必须等长。尾帧补零至 480 采样，状态推进完整一帧，只返回请求长度；连续调用尽量使用 480 的整数倍。
 - 不补偿模型延迟，不提供流结束 flush。解码、声道拆分和重采样由应用负责。
-- 空输入、错误采样率和长度不等的校验错误不会改变输出/状态。推理错误可能发生在已有输出写入、状态推进之后；再次使用前 reset，运行库/Session 无法恢复时重新创建。错误类型见 [`anr-core`](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-core/README.md)。
+- 空输入、错误采样率和长度不等的校验错误不会改变输出/状态。推理错误可能发生在已有输出写入、状态推进之后；再次使用前 reset，运行库/Session 无法恢复时重新创建。错误类型见 [`anr-core`](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-core/README.md)。
 
 初始衰减为 **3 dB**（`factor() == 5`）。`set_factor` 将值限制到 `0..=100`，再按 `round(factor / 100 * 60)` 设置整分贝；`factor()` 从实际分贝换算回百分比并取整，读回值可能不同。`set_atten_lim_db` / `get_atten_lim_db` 直接访问 `0..=60` dB，保留小数。两种 setter 都忽略 NaN，正负无穷分别饱和到上限和下限。
 
@@ -261,4 +261,4 @@ CUDA 展开 `FusedConv(Sigmoid)`，保留其支持的 ReLU 卷积和矩阵融合
 
 ### 许可
 
-MIT OR Apache-2.0，任选其一：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。模型权重、ONNX Runtime 和 provider 依赖另有许可条件。ONNX 解析使用未修改的 `onnx-protobuf` 0.2.3（MPL-2.0）和 `protobuf` 3.4.0（MIT）；源码和分发要求见[第三方说明](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-cli/THIRD-PARTY-NOTICES.md)。
+MIT OR Apache-2.0，任选其一：[LICENSE-MIT](LICENSE-MIT)、[LICENSE-APACHE](LICENSE-APACHE)。模型权重、ONNX Runtime 和 provider 依赖另有许可条件。ONNX 解析使用未修改的 `onnx-protobuf` 0.2.3（MPL-2.0）和 `protobuf` 3.4.0（MIT）；源码和分发要求见[第三方说明](https://github.com/lona-cn/anr/blob/v0.3.0/crates/anr-cli/THIRD-PARTY-NOTICES.md)。

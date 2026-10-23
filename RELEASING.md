@@ -54,11 +54,11 @@ cargo +stable test --locked -p anr-openvino --test dfn3 gpu_matches_streaming --
 | push `v<workspace版本>` tag | 发布该版本；带预发布后缀的版本标为 prerelease |
 | pull request 或手动运行 workflow | 上传 Actions artifacts，不创建 Release |
 
-版本 tag 必须与 workspace 版本完全一致，否则 prepare job 会失败。例如工作区版本为 `0.2.0` 时：
+版本 tag 必须与 workspace 版本完全一致，否则 prepare job 会失败。例如工作区版本为 `0.3.0` 时：
 
 ```text
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 发布 job 等待 Windows x64、Linux x64、macOS arm64、macOS x64 及 WebGPU 检查全部成功。它使用内置 `GITHUB_TOKEN`，只有发布 job 获得 `contents: write`。
@@ -118,6 +118,8 @@ cargo publish --registry crates-io --locked -p anr-core
 ```
 
 GitHub workflow 不执行 `cargo publish`。同名同版本的 crate 一经发布不能覆盖。
+
+当前发布版本以根 `Cargo.toml` 的 `[workspace.package].version` 为准；下节保留 v0.2.0 发布前的历史文档核查记录，不代表本次发布已经完成相同验证。
 
 ### v0.2.0 发布前文档核查
 
