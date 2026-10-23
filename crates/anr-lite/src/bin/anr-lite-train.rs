@@ -35,10 +35,10 @@ struct Args {
     #[arg(long, default_value_t = 50)]
     epochs: usize,
     /// 每次优化使用的语音片段数
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 160)]
     batch_size: usize,
     /// 随机训练片段时长；noisy 与 clean 使用相同裁剪位置
-    #[arg(long, default_value_t = 2.0)]
+    #[arg(long, default_value_t = 4.0)]
     segment_seconds: f64,
     /// AdamW 学习率
     #[arg(long, default_value_t = 0.001)]

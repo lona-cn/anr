@@ -48,7 +48,7 @@ With Cargo's install directory on `PATH`, the installed binaries run from **any 
 ```powershell
 $dataset = 'C:/data/VoiceBank-DEMAND 28-speaker'
 $trainRun = 'C:/anr-runs/lite-train-001'
-anr-lite-train --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+anr-lite-train --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 
 # Run only after training completes, using its actual best.bin.
 $checkpoint = Join-Path $trainRun 'best.bin'
@@ -144,10 +144,12 @@ These checks establish format and pairing, not official corpus provenance or com
 
 Choose **one** of the following PowerShell commands. Each creates a unique new output path outside the dataset; keep `$trainRun` for subsequent rendering.
 
+Training defaults are `--batch-size 160 --segment-seconds 4`. The CPU examples explicitly use batch size 8. These defaults can exceed GPU memory; choose a smaller `--batch-size` explicitly if needed. The trainer does not automatically reduce the batch or fall back to CPU.
+
 ```powershell
 $dataset = 'datasets/VoiceBank-DEMAND 28-speaker'
 $trainRun = Join-Path 'target/anr-lite-training' ('en-cpu-' + [guid]::NewGuid().ToString('N'))
-cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 ```
 
 GPU-only build with explicit discrete-GPU selection:
@@ -155,7 +157,7 @@ GPU-only build with explicit discrete-GPU selection:
 ```powershell
 $dataset = 'datasets/VoiceBank-DEMAND 28-speaker'
 $trainRun = Join-Path 'target/anr-lite-training' ('en-wgpu-' + [guid]::NewGuid().ToString('N'))
-cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device wgpu --gpu-index 0 --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device wgpu --gpu-index 0 --epochs 50 --batch-size 160 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 ```
 
 Each epoch shuffles files and takes a paired random segment from each file. Training uses AdamW (weight decay `1e-4`, gradient norm clipping 5), compressed-magnitude and compressed-complex spectral MSE (exponent 0.3, power epsilon `1e-8`), plus waveform L1 weighted by 0.1. Loss analysis uses Hann windows, FFT 960 and hop 480, excluding pure padding and weighting partial frames by valid Hann energy. Validation uses `valid()` and complete utterances in batches of at most eight; loss is weighted by valid sample count, unlike the equal-utterance quality metrics below.
@@ -309,7 +311,7 @@ cargo install anr-lite --version 0.2.0 --locked --no-default-features --features
 ```powershell
 $dataset = 'C:/data/VoiceBank-DEMAND 28-speaker'
 $trainRun = 'C:/anr-runs/lite-train-001'
-anr-lite-train --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+anr-lite-train --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 
 # 仅在训练完成后执行，使用该次训练实际生成的 best.bin。
 $checkpoint = Join-Path $trainRun 'best.bin'
@@ -443,12 +445,14 @@ datasets/VoiceBank-DEMAND 28-speaker/
 
 下面 PowerShell 示例为每次训练生成新路径。CPU 与 GPU 命令是**二选一**；完成所选命令后，`$trainRun` 可用于后续导出。所有输出位于数据集之外。
 
+训练默认使用 `--batch-size 160 --segment-seconds 4`。CPU 示例显式使用 batch size 8。默认配置可能超出 GPU 显存；显存不足时须手动减小 `--batch-size`，训练器不会自动减小 batch 或回退到 CPU。
+
 ```powershell
 $dataset = 'datasets/VoiceBank-DEMAND 28-speaker'
 $trainRun = Join-Path 'target/anr-lite-training' ([guid]::NewGuid().ToString('N'))
 
 # CPU，保留默认 flex feature
-cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+cargo run -p anr-lite --release --locked --features train --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device cpu --epochs 50 --batch-size 8 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 ```
 
 GPU-only 构建及明确的独立 GPU 选择：
@@ -456,7 +460,7 @@ GPU-only 构建及明确的独立 GPU 选择：
 ```powershell
 $dataset = 'datasets/VoiceBank-DEMAND 28-speaker'
 $trainRun = Join-Path 'target/anr-lite-training' ([guid]::NewGuid().ToString('N'))
-cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device wgpu --gpu-index 0 --epochs 50 --batch-size 8 --segment-seconds 2 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
+cargo run -p anr-lite --release --locked --no-default-features --features train,wgpu --bin anr-lite-train -- --dataset $dataset --output-dir $trainRun --device wgpu --gpu-index 0 --epochs 50 --batch-size 160 --segment-seconds 4 --learning-rate 0.001 --seed 42 --validation-speakers p226,p287
 ```
 
 训练器每轮打乱文件顺序，对每个文件随机取配对片段。默认 AdamW 的 weight decay 为 `1e-4`，梯度 norm clipping 为 5。损失是压缩幅度谱 MSE、压缩复数谱 MSE（压缩指数 0.3，power epsilon `1e-8`）和权重 0.1 的波形 L1；loss 分析使用 Hann 窗、FFT 960、hop 480。纯 padding 不计入 loss，部分有效帧按有效 Hann 能量加权。
@@ -472,8 +476,8 @@ cargo run -p anr-lite --release --locked --no-default-features --features train,
 | `--device cpu\|wgpu` | `cpu`；须有对应编译 feature |
 | `--gpu-index N` | `0`，仅 wgpu |
 | `--epochs N` | `50`，必须为正 |
-| `--batch-size N` | `8`，必须为正 |
-| `--segment-seconds S` | `2.0`，有限正数，换算后采样数在 `1..=u32::MAX` |
+| `--batch-size N` | `160`，必须为正 |
+| `--segment-seconds S` | `4.0`，有限正数，换算后采样数在 `1..=u32::MAX` |
 | `--learning-rate RATE` | `0.001`，有限正数 |
 | `--seed N` | `42`，用于设备初始化、文件顺序与裁剪 |
 | `--validation-speakers LIST` | `p226,p287` |
