@@ -116,6 +116,10 @@ For a native Vulkan application on Windows/Linux that supplies its own model fil
 anr = { version = "0.2.0", default-features = false, features = ["vk"] }
 ```
 
+`vk` compiles fixed Network modes/shapes once and reuses their pipelines. FP32 GRUs use parallel K reductions; initialization selects widths 16/32/64 using GPU timestamps, or width 32 when timestamps are unavailable. Compilation and kernel selection never run per audio frame.
+
+Optional `VK_KHR_cooperative_matrix` pointwise kernels are selected per layer only when initialization measurements beat FP32. Their weights are packed once into compensated FP16 pairs, and subgroups share input tiles; accumulation, activations and recurrent state stay FP32. Missing optional support, unavailable timestamps, or slower matrix kernels retain the original FP32 pointwise implementation. Vulkan 1.1 and the synchronous API remain sufficient; initialization incurs additional compilation and measurement work.
+
 Browser WebGPU uses `anr::wgpu::web::DFN3` and asynchronous model-byte loading/processing rather than the synchronous `NoiseReduction` trait. It needs HTTPS or localhost, a hardware WebGPU adapter, and separately served model bytes. The [library guide](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md) covers package generation and the [module Worker example](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/examples/web/worker.js); it does not supply microphone or AudioWorklet buffering.
 
 For backend platform restrictions, SDK/runtime deployment, constructors, and model ports, use the [library guide](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md). For timing methodology, historical measurements, and reproduction commands, use [benchmark.md](https://github.com/lona-cn/anr/blob/v0.2.0/benchmark.md); a 10 ms model frame is not a processing-time or end-to-end latency guarantee.
@@ -259,6 +263,10 @@ Windows/Linux 原生 Vulkan 应用自行提供模型文件时，可使用：
 ```toml
 anr = { version = "0.2.0", default-features = false, features = ["vk"] }
 ```
+
+`vk` 在初始化时编译固定算子和 shape 的 Network shader，并复用 pipeline。GRU 保持 FP32，沿 K 维并行归约；通过 GPU timestamp 在 16/32/64 三种宽度中选择，无法计时时使用 32。处理音频帧时不编译 shader，也不重新选型。
+
+可选的 `VK_KHR_cooperative_matrix` pointwise 路径只在逐层实测快于 FP32 时启用。权重仅打包一次为带残差补偿的 FP16 对，subgroup 共享输入 tile；累加、激活值和循环状态保持 FP32。缺少所需支持、无法计时或矩阵路径更慢时，保留原来的 FP32 pointwise 实现。最低要求仍为 Vulkan 1.1，同步 API 不变，代价是初始化增加编译与计时工作。
 
 浏览器 WebGPU 使用 `anr::wgpu::web::DFN3`，通过异步接口加载模型字节并处理音频，不实现同步 `NoiseReduction` trait。需要 HTTPS 或 localhost、硬件 WebGPU adapter，以及单独提供的模型字节。[库文档](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr/README.md) 介绍包构建方法和 [module Worker 示例](https://github.com/lona-cn/anr/blob/v0.2.0/crates/anr-wgpu/examples/web/worker.js)，不提供麦克风或 AudioWorklet 缓冲。
 

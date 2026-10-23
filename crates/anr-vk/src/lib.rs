@@ -3,6 +3,15 @@
 //! The supported external ONNX model is a hash-locked parameter container, not
 //! an executable CPU/ONNX Runtime graph. All inference, DSP and recurrent state
 //! stay on a hardware GPU owned by a private worker; no display is required.
+//!
+//! Network pipelines specialize fixed modes/shapes once and reuse runtime buffer
+//! offsets. GRUs keep FP32 arithmetic with parallel K reductions. Initialization
+//! uses GPU timestamps, when available, to select GRU widths and pointwise kernels;
+//! frame processing never compiles or benchmarks shaders.
+//!
+//! Compatible devices may use KHR cooperative pointwise matrices with prepacked,
+//! compensated FP16 weights and FP32 accumulation. Activations and recurrent state
+//! stay FP32. Unsupported or slower matrix paths retain FP32 pointwise compute.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 mod gpu;
 
@@ -45,6 +54,9 @@ use std::path::Path;
 /// is added. Validation failures leave output/state untouched. Execution errors
 /// require recreating the stream; `reset()` cannot recover a failed executor.
 /// The Vulkan loader and a hardware Vulkan 1.1 compute device are required.
+/// Initialization compiles fixed-shape pipelines and optionally measures kernels.
+/// Cooperative matrices are optional; unsupported devices retain FP32 pointwise
+/// kernels. Without GPU timestamps, pointwise uses FP32 and GRUs use K width 32.
 /// CPU devices and implicit backend fallbacks are never used.
 pub struct DFN3 {
     inner: Denoiser,

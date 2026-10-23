@@ -1,12 +1,17 @@
+mod gru;
 mod native;
+#[cfg(test)]
+mod tests;
+mod tuning;
 
 use anr_core::Result;
 use anr_dfn3::{
-    Executor, FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, ShaderKind, backend, shaders,
+    Dispatch, Executor, FRAME_SIZE, Model, PARAMETER_BYTES, STATE_SIZE, ShaderKind, backend,
+    shaders,
 };
 use ash::vk;
 use native::{Buffer, Context, Resource, checked};
-use std::{mem, ptr};
+use std::{collections::HashMap, mem, ptr};
 
 const FRAME_BYTES: u64 = FRAME_SIZE as u64 * 4;
 const STATE_BYTES: u64 = STATE_SIZE as u64 * 4;
@@ -17,11 +22,26 @@ const HOST_MEMORY: vk::MemoryPropertyFlags = vk::MemoryPropertyFlags::from_raw(
 
 struct Buffers {
     weights: Buffer,
+    packed_weights: Option<Buffer>,
     states: [Buffer; 2],
     scratch: Buffer,
     parameters: Buffer,
     upload: Buffer,
     readback: Buffer,
+}
+
+#[derive(Clone, Copy)]
+struct CompiledDispatch {
+    pipeline: usize,
+    groups: u32,
+    parameter_index: usize,
+}
+
+#[derive(Clone, Copy)]
+enum PointwisePolicy {
+    Fastest,
+    #[cfg(test)]
+    Cooperative,
 }
 
 // Only the worker ever touches these handles or mapped pointers. Resources
@@ -34,7 +54,8 @@ pub(crate) struct Gpu {
     poisoned: bool,
     parameter_stride: u32,
     buffers: Buffers,
-    pipelines: [Resource<vk::Pipeline>; 3],
+    pipelines: Vec<Resource<vk::Pipeline>>,
+    dispatches: Vec<CompiledDispatch>,
     pipeline_layout: Resource<vk::PipelineLayout>,
     _descriptor_pool: Resource<vk::DescriptorPool>,
     _descriptor_layout: Resource<vk::DescriptorSetLayout>,
@@ -48,6 +69,27 @@ pub(crate) struct Gpu {
 impl Gpu {
     pub(crate) fn new(model: Model) -> Result<Self> {
         let context = Context::new(&model)?;
+        Self::with_context(model, context, PointwisePolicy::Fastest)
+    }
+
+    fn with_context(
+        mut model: Model,
+        mut context: Context,
+        policy: PointwisePolicy,
+    ) -> Result<Self> {
+        if matches!(policy, PointwisePolicy::Fastest) && context.timestamp_valid_bits == 0 {
+            context.cooperative_subgroup_size = None;
+        }
+        gru::prepare(&mut model);
+        let mut packed_words = 0;
+        if let Some(subgroup_size) = context.cooperative_subgroup_size {
+            for dispatch in &mut model.dispatches {
+                if pointwise_groups(dispatch, subgroup_size).is_some() {
+                    dispatch.params[21] = packed_words;
+                    packed_words += 64 * 64;
+                }
+            }
+        }
         let alignment = context.limits.min_uniform_buffer_offset_alignment.max(1);
         let stride = u64::from(PARAMETER_BYTES)
             .div_ceil(alignment)
@@ -68,6 +110,11 @@ impl Gpu {
         }
         let storage_usage =
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        // Numerical GPU tests read state directly; production never copies it.
+        #[cfg(test)]
+        let state_usage = storage_usage | vk::BufferUsageFlags::TRANSFER_SRC;
+        #[cfg(not(test))]
+        let state_usage = storage_usage;
         let buffers = Buffers {
             weights: Buffer::new(
                 &context,
@@ -75,17 +122,27 @@ impl Gpu {
                 storage_usage,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )?,
+            packed_weights: if packed_words == 0 {
+                None
+            } else {
+                Some(Buffer::new(
+                    &context,
+                    u64::from(packed_words) * 4,
+                    vk::BufferUsageFlags::STORAGE_BUFFER,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                )?)
+            },
             states: [
                 Buffer::new(
                     &context,
                     STATE_BYTES,
-                    storage_usage,
+                    state_usage,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 )?,
                 Buffer::new(
                     &context,
                     STATE_BYTES,
-                    storage_usage,
+                    state_usage,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 )?,
             ],
@@ -115,7 +172,7 @@ impl Gpu {
             )?,
         };
         let device = &context.device;
-        let bindings = [
+        let mut bindings = vec![
             storage_binding(0),
             storage_binding(1),
             storage_binding(2),
@@ -126,6 +183,9 @@ impl Gpu {
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
         ];
+        if buffers.packed_weights.is_some() {
+            bindings.push(storage_binding(5));
+        }
         let descriptor_layout = Resource::new(
             device,
             checked("create descriptor layout", unsafe {
@@ -147,15 +207,55 @@ impl Gpu {
             })?,
             |d, h| unsafe { d.destroy_pipeline_layout(h, None) },
         );
-        let pipelines = [
-            pipeline(device, pipeline_layout.value, ShaderKind::Network)?,
+        let mut pipelines = vec![
             pipeline(device, pipeline_layout.value, ShaderKind::Dsp)?,
             pipeline(device, pipeline_layout.value, ShaderKind::Fft)?,
         ];
+        let mut dispatches = Vec::with_capacity(model.dispatches.len());
+        let mut network_cache = HashMap::new();
+        for (index, dispatch) in model.dispatches.iter().enumerate() {
+            let (pipeline_index, groups) = match dispatch.shader {
+                ShaderKind::Dsp => (0, dispatch.groups),
+                ShaderKind::Fft => (1, dispatch.groups),
+                ShaderKind::Network => {
+                    let (kernel, groups) = if dispatch.params[0] == 5 {
+                        (shaders::NetworkKernel::Gru(32), gru::groups(32))
+                    } else {
+                        (shaders::NetworkKernel::Scalar, dispatch.groups)
+                    };
+                    let key = (kernel, shaders::network_key(&dispatch.params));
+                    let pipeline_index = if let Some(&pipeline_index) = network_cache.get(&key) {
+                        pipeline_index
+                    } else {
+                        let words = shaders::network_spirv(&dispatch.params, kernel)?;
+                        let pipeline_index = pipelines.len();
+                        pipelines.push(pipeline_words(
+                            device,
+                            pipeline_layout.value,
+                            &words,
+                            "fixed Network",
+                            vk::PipelineShaderStageCreateFlags::empty(),
+                        )?);
+                        network_cache.insert(key, pipeline_index);
+                        pipeline_index
+                    };
+                    (pipeline_index, groups)
+                }
+            };
+            dispatches.push(CompiledDispatch {
+                pipeline: pipeline_index,
+                groups,
+                parameter_index: index,
+            });
+        }
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(8),
+                .descriptor_count(if buffers.packed_weights.is_some() {
+                    10
+                } else {
+                    8
+                }),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                 .descriptor_count(2),
@@ -192,7 +292,8 @@ impl Gpu {
                     .offset(0)
                     .range(u64::from(PARAMETER_BYTES)),
             ];
-            let writes = [
+            let packed_info = buffers.packed_weights.as_ref().map(descriptor_buffer);
+            let mut writes = vec![
                 descriptor_write(set, 0, vk::DescriptorType::STORAGE_BUFFER, &infos[0]),
                 descriptor_write(set, 1, vk::DescriptorType::STORAGE_BUFFER, &infos[1]),
                 descriptor_write(set, 2, vk::DescriptorType::STORAGE_BUFFER, &infos[2]),
@@ -204,6 +305,14 @@ impl Gpu {
                     &infos[4],
                 ),
             ];
+            if let Some(info) = &packed_info {
+                writes.push(descriptor_write(
+                    set,
+                    5,
+                    vk::DescriptorType::STORAGE_BUFFER,
+                    info,
+                ));
+            }
             unsafe { device.update_descriptor_sets(&writes, &[]) };
         }
         let command_pool = Resource::new(
@@ -246,6 +355,7 @@ impl Gpu {
             buffers,
             pipelines,
             pipeline_layout,
+            dispatches,
             _descriptor_pool: descriptor_pool,
             _descriptor_layout: descriptor_layout,
             _command_pool: command_pool,
@@ -255,11 +365,140 @@ impl Gpu {
             context,
         };
         gpu.initialize()?;
+        let mut tuner = if matches!(policy, PointwisePolicy::Fastest) {
+            tuning::Tuner::new(&gpu)?
+        } else {
+            None
+        };
+        gpu.select_pointwise(policy, tuner.as_mut())?;
+        if let Some(tuner) = tuner.as_mut() {
+            gpu.select_gru(tuner)?;
+        }
+        if let Some(mut tuner) = tuner {
+            tuner.clear(&mut gpu)?;
+        }
+        gpu.compact_pipelines();
         for current in 0..2 {
             gpu.record_frame(gpu.commands[current * 2], current, false)?;
             gpu.record_frame(gpu.commands[current * 2 + 1], current, true)?;
         }
         Ok(gpu)
+    }
+
+    fn select_pointwise(
+        &mut self,
+        policy: PointwisePolicy,
+        mut tuner: Option<&mut tuning::Tuner>,
+    ) -> Result<()> {
+        let Some(size) = self.context.cooperative_subgroup_size else {
+            return Ok(());
+        };
+        if matches!(policy, PointwisePolicy::Fastest) && tuner.is_none() {
+            return Ok(());
+        }
+        let mut cache = HashMap::new();
+        for index in 0..self.model.dispatches.len() {
+            let Some(groups) = pointwise_groups(&self.model.dispatches[index], size) else {
+                continue;
+            };
+            let parameters = self.model.dispatches[index].params;
+            let key = shaders::network_key(&parameters);
+            let candidate = if let Some(&candidate) = cache.get(&key) {
+                candidate
+            } else {
+                let words =
+                    shaders::network_spirv(&parameters, shaders::NetworkKernel::Cooperative(size))?;
+                let candidate = self.pipelines.len();
+                self.pipelines.push(pipeline_words(
+                    &self.context.device,
+                    self.pipeline_layout.value,
+                    &words,
+                    "cooperative pointwise",
+                    vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS,
+                )?);
+                cache.insert(key, candidate);
+                candidate
+            };
+            let baseline = self.dispatches[index];
+            let candidates = [
+                (self.pipelines[baseline.pipeline].value, baseline.groups),
+                (self.pipelines[candidate].value, groups),
+            ];
+            let selected = match policy {
+                PointwisePolicy::Fastest => tuner
+                    .as_deref_mut()
+                    .expect("tuning availability checked")
+                    .choose(self, index, &candidates)?,
+                #[cfg(test)]
+                PointwisePolicy::Cooperative => 1,
+            };
+            if selected == 1 {
+                self.dispatches[index].pipeline = candidate;
+                self.dispatches[index].groups = groups;
+            }
+        }
+        Ok(())
+    }
+
+    fn select_gru(&mut self, tuner: &mut tuning::Tuner) -> Result<()> {
+        let mut cache = HashMap::new();
+        for index in 0..self.model.dispatches.len() {
+            let dispatch = &self.model.dispatches[index];
+            if dispatch.shader != ShaderKind::Network || dispatch.params[0] != 5 {
+                continue;
+            }
+            let parameters = dispatch.params;
+            let key = shaders::network_key(&parameters);
+            let baseline = self.dispatches[index];
+            cache.entry((key, 32)).or_insert(baseline.pipeline);
+            let mut choices = [baseline; 3];
+            let mut candidates = [(vk::Pipeline::null(), 0); 3];
+            for (position, width) in [32, 16, 64].into_iter().enumerate() {
+                let pipeline = if let Some(&pipeline) = cache.get(&(key, width)) {
+                    pipeline
+                } else {
+                    let words =
+                        shaders::network_spirv(&parameters, shaders::NetworkKernel::Gru(width))?;
+                    let pipeline = self.pipelines.len();
+                    self.pipelines.push(pipeline_words(
+                        &self.context.device,
+                        self.pipeline_layout.value,
+                        &words,
+                        "parallel GRU",
+                        vk::PipelineShaderStageCreateFlags::empty(),
+                    )?);
+                    cache.insert((key, width), pipeline);
+                    pipeline
+                };
+                choices[position].pipeline = pipeline;
+                choices[position].groups = gru::groups(width);
+                candidates[position] = (self.pipelines[pipeline].value, choices[position].groups);
+            }
+            self.dispatches[index] = choices[tuner.choose(self, index, &candidates)?];
+        }
+        Ok(())
+    }
+
+    fn compact_pipelines(&mut self) {
+        let mut used = vec![false; self.pipelines.len()];
+        for dispatch in &self.dispatches {
+            used[dispatch.pipeline] = true;
+        }
+        let mut remap = vec![0; self.pipelines.len()];
+        let mut old = 0;
+        let mut next = 0;
+        self.pipelines.retain(|_| {
+            let keep = used[old];
+            remap[old] = next;
+            old += 1;
+            if keep {
+                next += 1;
+            }
+            keep
+        });
+        for dispatch in &mut self.dispatches {
+            dispatch.pipeline = remap[dispatch.pipeline];
+        }
     }
 }
 impl Executor for Gpu {
@@ -334,6 +573,21 @@ impl Gpu {
             );
         }
         let device = &self.context.device;
+        let packing_pipeline = self
+            .buffers
+            .packed_weights
+            .as_ref()
+            .map(|_| {
+                let words = shaders::pointwise_pack_spirv()?;
+                pipeline_words(
+                    device,
+                    self.pipeline_layout.value,
+                    &words,
+                    "pointwise weight packing",
+                    vk::PipelineShaderStageCreateFlags::empty(),
+                )
+            })
+            .transpose()?;
         let command = self.commands[4];
         checked("begin initialization commands", unsafe {
             device.begin_command_buffer(
@@ -347,9 +601,9 @@ impl Gpu {
                 device,
                 command,
                 vk::PipelineStageFlags::HOST,
-                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER | vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::AccessFlags::HOST_WRITE,
-                vk::AccessFlags::TRANSFER_READ,
+                vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::UNIFORM_READ,
             );
             device.cmd_copy_buffer(
                 command,
@@ -369,6 +623,30 @@ impl Gpu {
                 vk::AccessFlags::TRANSFER_WRITE,
                 vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
             );
+            if let Some(pipeline) = &packing_pipeline {
+                device.cmd_bind_pipeline(command, vk::PipelineBindPoint::COMPUTE, pipeline.value);
+                for (index, dispatch) in self.model.dispatches.iter().enumerate() {
+                    if pointwise_groups(dispatch, 32).is_some() {
+                        device.cmd_bind_descriptor_sets(
+                            command,
+                            vk::PipelineBindPoint::COMPUTE,
+                            self.pipeline_layout.value,
+                            0,
+                            &self.descriptor_sets[..1],
+                            &[index as u32 * self.parameter_stride],
+                        );
+                        device.cmd_dispatch(command, 64, 1, 1);
+                    }
+                }
+                memory_barrier(
+                    device,
+                    command,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::AccessFlags::SHADER_WRITE,
+                    vk::AccessFlags::SHADER_READ,
+                );
+            }
         }
         checked("end initialization commands", unsafe {
             device.end_command_buffer(command)
@@ -427,15 +705,12 @@ impl Gpu {
                 vk::AccessFlags::TRANSFER_WRITE,
                 vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
             );
-            let mut last_shader = None;
-            for (index, dispatch) in self.model.dispatches.iter().enumerate() {
-                if last_shader != Some(dispatch.shader) {
-                    device.cmd_bind_pipeline(
-                        command,
-                        vk::PipelineBindPoint::COMPUTE,
-                        self.pipelines[dispatch.shader.index()].value,
-                    );
-                    last_shader = Some(dispatch.shader);
+            let mut last_pipeline = None;
+            for dispatch in &self.dispatches {
+                let pipeline = self.pipelines[dispatch.pipeline].value;
+                if last_pipeline != Some(pipeline) {
+                    device.cmd_bind_pipeline(command, vk::PipelineBindPoint::COMPUTE, pipeline);
+                    last_pipeline = Some(pipeline);
                 }
                 device.cmd_bind_descriptor_sets(
                     command,
@@ -443,7 +718,7 @@ impl Gpu {
                     self.pipeline_layout.value,
                     0,
                     &[self.descriptor_sets[current]],
-                    &[index as u32 * self.parameter_stride],
+                    &[dispatch.parameter_index as u32 * self.parameter_stride],
                 );
                 device.cmd_dispatch(command, dispatch.groups, 1, 1);
                 // Every scheduled operator can consume scratch/state written by
@@ -559,20 +834,61 @@ fn descriptor_write<'a>(
         .buffer_info(std::slice::from_ref(info))
 }
 
+fn pointwise_groups(dispatch: &Dispatch, subgroup_size: u32) -> Option<u32> {
+    let p = &dispatch.params;
+    (dispatch.shader == ShaderKind::Network
+        && p[0] == 0
+        && p[6] == 64
+        && p[9] == 64
+        && p[7] == p[10]
+        && p[8] == p[11]
+        && p[12] == 1
+        && p[13] == 1
+        && p[14] == 1
+        && p[15] == 1
+        && p[16] == 0
+        && p[17] == 0
+        && p[18] == 1
+        && p[19] == 1)
+        .then(|| ((p[10] * p[11]).div_ceil(16) * 4).div_ceil(64 / subgroup_size))
+}
+
 fn pipeline(
     device: &ash::Device,
     layout: vk::PipelineLayout,
     kind: ShaderKind,
 ) -> Result<Resource<vk::Pipeline>> {
     let words = shaders::spirv(kind)?;
+    let name = match kind {
+        ShaderKind::Network => "Network",
+        ShaderKind::Dsp => "Dsp",
+        ShaderKind::Fft => "Fft",
+    };
+    pipeline_words(
+        device,
+        layout,
+        &words,
+        name,
+        vk::PipelineShaderStageCreateFlags::empty(),
+    )
+}
+
+fn pipeline_words(
+    device: &ash::Device,
+    layout: vk::PipelineLayout,
+    words: &[u32],
+    name: &str,
+    flags: vk::PipelineShaderStageCreateFlags,
+) -> Result<Resource<vk::Pipeline>> {
     let module = Resource::new(
         device,
         checked("create compute shader module", unsafe {
-            device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
+            device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(words), None)
         })?,
         |d, h| unsafe { d.destroy_shader_module(h, None) },
     );
     let stage = vk::PipelineShaderStageCreateInfo::default()
+        .flags(flags)
         .stage(vk::ShaderStageFlags::COMPUTE)
         .module(module.value)
         .name(c"main");
@@ -592,7 +908,7 @@ fn pipeline(
                 }
             }
             Err(backend(format!(
-                "Vulkan create {kind:?} compute pipeline: {error:?}"
+                "Vulkan create {name} compute pipeline: {error:?}"
             )))
         }
     }

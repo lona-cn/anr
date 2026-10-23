@@ -144,6 +144,12 @@ The same one-path constructor applies to `gl`, `vk`, `wgpu`, `dx`, `cuda`, `tens
 
 GL/GLES/Vulkan/wgpu/D3D12 use the fixed plan and WGSL kernels in `anr-dfn3`; Naga generates GLSL/GLSL ES/SPIR-V/HLSL where needed. The ONNX supplies parameters rather than a general-purpose runtime graph. No external model conversion, Python runtime, or shader compiler is required. CUDA/OpenCL execute the complete fixed FP32 schedule, including FFT, normalization, network inference, filtering, and overlap-add. These GPU backends do not substitute ORT or CPU inference.
 
+**Vulkan:** specializes fixed Network modes/shapes and shares pipelines across matching dispatches, keeping buffer offsets and attenuation dynamic. GRUs use a private, once-transposed FP32 weight layout and parallel K reductions. Initialization measures widths 16/32/64; devices without GPU timestamps use width 32. No compilation or kernel selection occurs per frame, and `run` still waits for GPU completion/readback.
+
+Readback prefers host-cached coherent memory when available, retaining the original compatible coherent memory type otherwise.
+
+Dense `64→64` pointwise convolutions can optionally use `VK_KHR_cooperative_matrix`. Initialization checks a subgroup-scope `16×16×16` FP16-input/FP32-accumulator matrix, subgroup size 32 or 64, full subgroups and vote operations, 16,640 bytes of workgroup memory, five storage bindings, `shaderFloat16`, the Vulkan memory model, and Naga's required 16-bit storage features. GPU timing selects the matrix kernel only if it beats FP32 for that layer; missing support or timestamps retains the original FP32 pointwise path and Vulkan 1.1 minimum. The matrix path packs static weights once into an additional 128 KiB FP16 high/residual buffer and shares workgroup input tiles. Accumulation, original weights, activations and state remain FP32; out-of-half-range input tiles use the original convolution. Results are not promised to be bit-identical to FP32. Pipeline compilation and optional timing add initialization work.
+
 **CUDA:** runtime-loads the Driver API and NVRTC, preferring major 13 then 12. Windows candidates are `nvrtc64_130_0.dll` and `nvrtc64_120_0.dll`; Linux candidates are `libnvrtc.so.13`, `.12`, and unversioned `libnvrtc.so`. Make NVRTC and its builtins dependencies discoverable through `PATH` / `LD_LIBRARY_PATH`. The driver must support the compiler's generated PTX and the compiler must support the GPU architecture; API 12.0 alone does not imply compatibility with NVRTC 13. Missing symbols/unsupported versions return errors. OpenCL instead requires the vendor's GPU ICD and does not select a CPU device.
 
 **TensorRT:** builds two standard-layer FP32 neural engines with TF32 disabled, combined with CUDA DSP/FFT graphs. Initialization builds engines without a persistent engine cache. Building requires C++17, `TENSORRT_ROOT`, and `CUDA_ROOT` or `CUDA_PATH`; `TENSORRT_LIB_DIR` / `CUDA_LIB_DIR` override link directories.
@@ -393,6 +399,12 @@ fn main() -> Result<()> {
 `gl`、`vk`、`wgpu`、`dx`、`cuda`、`tensorrt`、`opencl` 和默认 OpenVINO CPU 同样使用单路径构造器。高级 GL 调用方可通过 `anr::gl::DFN3::from_file_with_api(path, api)` 选择 `GlApi`；普通 `gl::DFN3::from_file` 只创建桌面上下文。
 
 GL/GLES/Vulkan/wgpu/D3D12 共用 `anr-dfn3` 固定计划和 WGSL 算子，按需由 Naga 生成 GLSL/GLSL ES/SPIR-V/HLSL。ONNX 只提供参数，不作为通用运行图；不需要外部模型转换、Python 运行库或 shader 编译器。CUDA/OpenCL 执行完整 FP32 调度，包括 FFT、归一化、神经网络、滤波和 overlap-add。这些 GPU 后端不替换为 ORT 或 CPU 推理。
+
+**Vulkan：**为固定算子和 shape 编译 Network shader，相同形状复用 pipeline，buffer 偏移与衰减强度仍可动态读取。GRU 只在私有权重上传前重排一次，保持 FP32 并沿 K 维并行归约；初始化时实测 16/32/64 三种宽度，没有 GPU timestamp 时使用 32。逐帧处理不编译 shader、不重新选型，`run` 仍等待 GPU 完成和结果回读。
+
+结果回读优先使用带 `HOST_CACHED` 的 coherent 内存，不支持时保留原来的兼容内存类型。
+
+Dense `64→64` pointwise 卷积可选用 `VK_KHR_cooperative_matrix`。初始化时检查 subgroup 范围的 `16×16×16` FP16 输入、FP32 累加矩阵，32 或 64 的 subgroup 大小、完整 subgroup 与 vote 操作、16,640 字节 workgroup 内存、五个 storage binding、`shaderFloat16`、Vulkan memory model，以及 Naga 所需的 16-bit storage feature。仅在该层 GPU 实测快于 FP32 时选择矩阵路径；缺少支持或无法计时时保留原 FP32 pointwise 实现，最低要求仍为 Vulkan 1.1。矩阵路径只打包一次静态权重，新增 128 KiB FP16 高位/残差 buffer，并让 workgroup 共享输入 tile。累加、原权重、激活值和循环状态保持 FP32，超出 FP16 有限范围的输入 tile 使用原卷积。不保证逐位相同，初始化会增加 pipeline 编译与可选计时的工作。
 
 **CUDA：**动态加载 Driver API 和 NVRTC，优先 major 13、再 12。Windows 候选为 `nvrtc64_130_0.dll`、`nvrtc64_120_0.dll`；Linux 为 `libnvrtc.so.13`、`.12`、`libnvrtc.so`。通过 `PATH` / `LD_LIBRARY_PATH` 提供 NVRTC 及 builtins 依赖。驱动须支持所选编译器的 PTX，编译器须支持 GPU 架构；Driver API 12.0 并不保证兼容 NVRTC 13。缺失符号或版本不支持正常报错。OpenCL 则需要厂商 GPU ICD，不选择 CPU device。
 

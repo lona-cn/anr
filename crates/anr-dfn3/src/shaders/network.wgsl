@@ -136,12 +136,9 @@ fn coefficients(index: u32) {
         + scratch[p(4u) + channel * 96u + frequency];
 }
 
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
-        @builtin(local_invocation_id) local_id: vec3<u32>) {
-    let index = global_id.x;
+fn network(index: u32, lane: u32) {
     // Uniform GRU branch precedes the per-lane bounds check for its barrier.
-    if p(0u) == 5u { gru(index, local_id.x); return; }
+    if p(0u) == 5u { gru(index, lane); return; }
     if index >= p(1u) { return; }
     if p(0u) == 0u { convolution(index, false); }
     else if p(0u) == 1u { convolution(index, true); }

@@ -4,7 +4,13 @@
 
 ## 尚未发布
 
-- `gl`、`gles`、`dx`、`wgpu`、`opencl` 改为逐调度编译固定参数 shader/kernel，算子类型、shape、stride、padding、group 和 buffer 偏移不再依赖运行时参数读取；仅保留衰减强度的动态参数。原 WGSL 运算体、FP32 表达式、状态布局及 Vulkan 编译路径不变，代价是初始化时编译更多程序。
+- `anr-vk` 按固定 Network 算子与 shape 编译 shader，相同形状复用 pipeline，保留 buffer 偏移和衰减强度的动态读取；逐帧处理不编译、不选型。
+- `VK_KHR_cooperative_matrix` pointwise 路径改为初始化时逐层实测，仅在快于 FP32 时启用；缺少 feature、矩阵尺寸或 GPU timestamp 的设备继续使用原 FP32 pointwise 实现，Vulkan 1.1 最低要求不变。
+- KHR 路径在 GPU 上一次性打包静态权重，新增 128 KiB FP16 高位/缩放残差 buffer，让 subgroup 共享输入 tile，保留 FP32 累加、原权重、激活值及状态；超出 FP16 有限范围的输入 tile 使用原 FP32 卷积。
+- GRU 使用 Vulkan 私有的重排权重和 FP32 K 维树形归约，初始化实测 16/32/64 三种宽度，无法计时时使用 32；调优后清空两份状态与 scratch，同步 `run`、强度切换和 `reset` 语义不变。
+- Vulkan 结果回读优先选择 `HOST_CACHED` 内存，仍要求 `HOST_COHERENT` 和兼容的 memory type；没有 cached 类型时保留原选择，不增加最低硬件要求，也不改成 busy-spin 等待。
+- 补充编译后 SPIR-V 的 feature/共享内存同步检查，以及真实 GPU 的原路径对照、完整/尾部 tile、half 范围与抵消输入、五层 GRU 独立 f64 对照和连续音频回归；现有 reference 误差门槛不变。
+- `gl`、`gles`、`dx`、`wgpu`、`opencl` 改为逐调度编译固定参数 shader/kernel，算子类型、shape、stride、padding、group 和 buffer 偏移不再依赖运行时参数读取；仅保留衰减强度的动态参数。原 WGSL 运算体、FP32 表达式与状态布局不变，代价是初始化时编译更多程序。
 
 ## 0.2.0
 

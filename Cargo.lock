@@ -203,6 +203,7 @@ dependencies = [
  "naga",
  "prost",
  "sha2",
+ "spirv",
 ]
 
 [[package]]

@@ -6,10 +6,16 @@ use anr_core::Result;
 
 mod specialized;
 
+#[cfg(feature = "spirv")]
+mod cooperative_spirv;
+
 /// Canonical WGSL kernels for wgpu and the GLSL, SPIR-V, and HLSL translations.
 pub fn wgsl(kind: ShaderKind) -> &'static str {
     match kind {
-        ShaderKind::Network => include_str!("shaders/network.wgsl"),
+        ShaderKind::Network => concat!(
+            include_str!("shaders/network.wgsl"),
+            include_str!("shaders/network_main.wgsl"),
+        ),
         ShaderKind::Dsp => include_str!("shaders/dsp.wgsl"),
         ShaderKind::Fft => include_str!("shaders/fft.wgsl"),
     }
@@ -130,13 +136,127 @@ fn glsl_version(dispatch: &Dispatch, version: naga::back::glsl::Version) -> Resu
 /// Compile Vulkan 1.1-compatible SPIR-V 1.3 with set-zero bindings 0 through 4.
 #[cfg(feature = "spirv")]
 pub fn spirv(kind: ShaderKind) -> Result<Vec<u32>> {
-    use naga::back::spv as target;
     let (module, info) = validated(kind)?;
+    write_spirv(&module, &info)
+        .map_err(|error| crate::backend(format!("{kind:?} SPIR-V compilation failed: {error}")))
+}
+
+#[cfg(feature = "spirv")]
+fn network_runtime_words(parameters: &[u32; 32]) -> u32 {
+    let offsets = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 21) | (1 << 22) | (1 << 23);
+    if parameters[0] == 5 {
+        offsets | (1 << 8) | (1 << 10)
+    } else {
+        offsets
+    }
+}
+
+/// Reuse key for fixed Network shapes. Buffer offsets stay dynamic, allowing
+/// repeated layers and all five GRUs to share their compiled pipelines.
+#[cfg(feature = "spirv")]
+pub fn network_key(parameters: &[u32; 32]) -> [u32; 32] {
+    let mut key = *parameters;
+    let dynamic = network_runtime_words(parameters);
+    for (index, value) in key.iter_mut().enumerate() {
+        if dynamic & (1 << index) != 0 {
+            *value = 0;
+        }
+    }
+    key
+}
+
+/// Vulkan implementation chosen before recording a Network dispatch.
+#[cfg(feature = "spirv")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NetworkKernel {
+    Scalar,
+    Cooperative(u32),
+    Gru(u32),
+}
+
+/// Compile fixed Network modes/shapes once, retaining runtime buffer offsets.
+/// Per-frame attenuation never causes pipeline compilation.
+#[cfg(feature = "spirv")]
+pub fn network_spirv(parameters: &[u32; 32], kernel: NetworkKernel) -> Result<Vec<u32>> {
+    let cooperative = matches!(kernel, NetworkKernel::Cooperative(_));
+    let source = match kernel {
+        NetworkKernel::Scalar => wgsl(ShaderKind::Network),
+        NetworkKernel::Cooperative(32 | 64) => concat!(
+            "enable f16;\nenable wgpu_cooperative_matrix;\n",
+            include_str!("shaders/network.wgsl"),
+            include_str!("shaders/cooperative_pointwise_packed.wgsl"),
+        ),
+        NetworkKernel::Gru(16 | 32 | 64) => concat!(
+            include_str!("shaders/network.wgsl"),
+            include_str!("shaders/gru_parallel.wgsl"),
+        ),
+        _ => return Err(crate::backend("Unsupported Vulkan Network kernel geometry")),
+    };
+    let mut parameters = *parameters;
+    match kernel {
+        NetworkKernel::Cooperative(size) => parameters[20] = size,
+        NetworkKernel::Gru(width) => parameters[24] = width,
+        NetworkKernel::Scalar => {}
+    }
+    let source =
+        specialized::source_with_dynamic(source, &parameters, network_runtime_words(&parameters));
+    let module = naga::front::wgsl::parse_str(&source).map_err(|error| {
+        crate::backend(format!(
+            "Network WGSL parsing failed:\n{}",
+            error.emit_to_string(&source)
+        ))
+    })?;
+    let capabilities = if cooperative {
+        naga::valid::Capabilities::COOPERATIVE_MATRIX
+            | naga::valid::Capabilities::SHADER_FLOAT16
+            | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32
+            | naga::valid::Capabilities::SUBGROUP
+    } else {
+        naga::valid::Capabilities::empty()
+    };
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities)
+        .subgroup_stages(naga::valid::ShaderStages::COMPUTE)
+        .subgroup_operations(naga::valid::SubgroupOperationSet::VOTE)
+        .validate(&module)
+        .map_err(|error| crate::backend(format!("Fixed Network validation failed: {error:?}")))?;
+    let words = write_spirv(&module, &info).map_err(|error| {
+        crate::backend(format!("Fixed Network SPIR-V compilation failed: {error}"))
+    })?;
+    if cooperative {
+        cooperative_spirv::publish_workgroup_memory(&words)
+    } else {
+        Ok(words)
+    }
+}
+
+/// Pack immutable pointwise weights once without requiring FP16 shader types.
+#[cfg(feature = "spirv")]
+pub fn pointwise_pack_spirv() -> Result<Vec<u32>> {
+    let source = include_str!("shaders/pointwise_pack.wgsl");
+    let module = naga::front::wgsl::parse_str(source)
+        .map_err(|error| crate::backend(format!("Pointwise pack parsing failed: {error}")))?;
+    // QuantizeToF16 is a core FP32 SPIR-V operation, not shaderFloat16.
+    let info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+    )
+    .validate(&module)
+    .map_err(|error| crate::backend(format!("Pointwise pack validation failed: {error:?}")))?;
+    write_spirv(&module, &info)
+        .map_err(|error| crate::backend(format!("Pointwise packing compilation failed: {error}")))
+}
+
+#[cfg(feature = "spirv")]
+fn write_spirv(
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+) -> std::result::Result<Vec<u32>, naga::back::spv::Error> {
+    use naga::back::spv as target;
     let options = target::Options {
         lang_version: (1, 3),
         flags: target::WriterFlags::empty(),
         fake_missing_bindings: false,
-        binding_map: (0..5)
+        binding_map: (0..6)
             .map(|binding| {
                 (
                     naga::ResourceBinding { group: 0, binding },
@@ -152,14 +272,14 @@ pub fn spirv(kind: ShaderKind) -> Result<Vec<u32>> {
         zero_initialize_workgroup_memory: target::ZeroInitializeWorkgroupMemoryMode::None,
         force_loop_bounding: false,
         emit_int_div_checks: false,
+        use_storage_input_output_16: false,
         ..Default::default()
     };
     let pipeline = target::PipelineOptions {
         shader_stage: naga::ShaderStage::Compute,
         entry_point: "main".into(),
     };
-    target::write_vec(&module, &info, &options, Some(&pipeline))
-        .map_err(|error| crate::backend(format!("{kind:?} SPIR-V compilation failed: {error}")))
+    target::write_vec(module, info, &options, Some(&pipeline))
 }
 
 /// Generated HLSL plus the real (possibly renamed) entry point for D3DCompile.
