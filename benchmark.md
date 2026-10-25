@@ -1,21 +1,23 @@
 # DFN3 推理性能记录
 
-以下是一次 Windows 本地运行的历史记录，比较同一 DFN3 模型的连续帧处理耗时。表中数值和环境信息按原始记录保留；下文另述当前工具的计时定义和复现方式，不将当前源码版本视为历史运行版本。数据来自合成输入，不包含音质评估，也不代表其他硬件、驱动或应用负载下的性能。
+以下是 2026-10-25 在 Windows 本地使用当前源码完成的一轮全量 `anr-bench` 测量，覆盖工具提供的全部十个后端入口，比较同一 DFN3 模型的连续帧处理耗时。主表已替换为本轮结果；固定参数 shader/kernel 特化的历史对照另节保留，不与本轮混用。数据来自合成输入，不包含音质评估，也不代表其他硬件、驱动或应用负载下的性能。
 
 ## 结果
 
 | 后端 | 准备（ms） | 平均每帧（ms） | P99（ms） | FPS | RTF | 超过 10 ms 的帧数 / 1000 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `gl` | 383.3 | 1.612 | 2.854 | 620.0 | 0.1613 | 0 |
-| `vk` | 135.5 | 0.885 | 1.685 | 1129.3 | 0.0886 | 0 |
-| `dx` | 1353.6 | 1.150 | 2.394 | 869.7 | 0.1150 | 0 |
-| `cuda` | 284.7 | 0.942 | 1.787 | 1060.6 | 0.0943 | 1 |
-| `tensorrt` | 19845.2 | 0.433 | 1.018 | 2310.9 | 0.0433 | 0 |
-| `openvino` (CPU) | 1028.1 | 1.951 | 7.046 | 512.4 | 0.1951 | 1 |
-| `opencl` | 128.4 | 0.913 | 1.708 | 1094.7 | 0.0913 | 0 |
-| `ort-cuda` | 427.7 | 5.812 | 10.811 | 172.0 | 0.5812 | 19 |
-| `ort-tensorrt` | 16826.9 | 4.800 | 7.908 | 208.3 | 0.4800 | 0 |
-| `ort-directml` | 469.5 | 6.976 | 10.047 | 143.3 | 0.6976 | 11 |
+| `gl` | 5263.7 | 1.314 | 2.261 | 760.9 | 0.1314 | 0 |
+| `vk` | 1322.9 | 0.400 | 0.736 | 2500.5 | 0.0400 | 0 |
+| `dx` | 10153.5 | 0.686 | 1.262 | 1456.5 | 0.0687 | 0 |
+| `cuda` | 626.7 | 0.828 | 1.406 | 1208.1 | 0.0828 | 0 |
+| `tensorrt` | 18962.2 | 0.432 | 1.104 | 2313.3 | 0.0432 | 0 |
+| `openvino` (CPU) | 817.2 | 0.762 | 2.069 | 1311.3 | 0.0763 | 0 |
+| `opencl` | 189.7 | 0.759 | 1.783 | 1317.5 | 0.0759 | 0 |
+| `ort-cuda` | 1347.9 | 4.550 | 8.180 | 219.7 | 0.4551 | 0 |
+| `ort-tensorrt` | 18625.4 | 2.160 | 3.652 | 463.0 | 0.2160 | 0 |
+| `ort-directml` | 1885.4 | 1.080 | 1.691 | 926.0 | 0.1080 | 0 |
+
+十项均完成预热与正式测量，JSON 中的 `status` 均为 `ok`，进程退出码为 0。`ort-tensorrt` 初始化期间仍有解析错误诊断，详见后端范围说明；完成测量不代表没有诊断或全程使用 GPU。
 
 ### 当前工具的计时定义
 
@@ -24,18 +26,19 @@
 - **FPS / RTF**：用正式测量循环的总墙钟时间计算，包含循环中的计时与记录开销，而非仅用单次调用耗时之和。`FPS = 帧数 / 总秒数`，`RTF = 总秒数 / 音频秒数`。每帧为 480 / 48000 = 0.01 秒音频，因此未舍入时 `RTF = 100 / FPS`；表中各列分别舍入，FPS 不必等于 `1000 / 平均每帧毫秒数`。
 - **超过 10 ms 的帧数**：仅统计单次 `run` 耗时严格大于 10 ms 的调用，恰好 10 ms 不计入。RTF 小于 1 只说明这轮循环的平均处理速度快于输入速率；零超限帧或 P99 小于 10 ms 也不能保证实时应用不丢帧。这不是音频设备到输出的端到端测试：未测设备 I/O、解码、重采样与应用缓冲，`run` 耗时也不等于模型算法延迟。
 
-## 历史测试条件
+## 本次测试条件
 
+- 测量时间：2026-10-25 11:27:50–11:29:08（UTC+8）；源码 commit：`2dc8f04afa1db2c8491953f0224ebef2f66c1ce2`，测量时工作区无未提交改动。
 - DFN3：48 kHz 单声道，480 采样/帧，降噪强度 80；每个后端预热 100 帧，测量 1000 帧，即正式测量 10 秒音频。
 - 输入：一秒长的 220 Hz 和 880 Hz 音调加噪声，固定种子 `0x12345678`，随后循环使用；预热与正式测量连续处理，保留帧间状态和输入位置，不在正式测量前 reset。
-- 单轮测试，后端串行运行，顺序同表；未清理后台程序或驱动缓存。结果不包含多轮方差或置信区间，准备时间也不是统一清空缓存后的冷启动测量。
+- 单轮测试，后端串行运行，顺序同表；复用已有构建目录，未清理后台程序或驱动缓存。结果不包含多轮方差或置信区间，准备时间也不是统一清空缓存后的冷启动测量，不应与旧驱动下的历史结果直接归因比较。
 - Windows x64（内部版本 26300）；AMD Ryzen 7 5800X；NVIDIA GeForce RTX 2080 Ti（驱动报告显存 22,528 MiB）。
-- Rust 1.99.0（`--release`）；NVIDIA 驱动 616.64；CUDA 13.3.73、cuDNN 9.26、TensorRT 10.16.1.11；OpenVINO 2026.4.0；ONNX Runtime 1.31.0、`ort` 2.0.0-rc.15。
+- Rust 1.99.0（`--release`，debug assertions 关闭）；NVIDIA 驱动 621.01；CUDA 13.3.73、cuDNN 9.26.1.1、TensorRT 10.16.1.11；OpenVINO 2026.4.0（build 22959）；ONNX Runtime 1.31.0、`ort` 2.0.0-rc.15；DirectML 1.15.4。
 - 模型 `models/dfn3.onnx` SHA-256：`fe5eb64fa2e4154c83f8e4935e82871c850c154387ee892e0ab65fe179e7d8c9`。
 
-## 固定参数 shader/kernel 特化对照
+## 历史：固定参数 shader/kernel 特化对照
 
-以下对照单独测量 `gl`、`gles`、`dx`、`wgpu`、`opencl` 的固定参数特化，不替换上面的历史结果，也不包含 Vulkan 改动。测试使用 Windows x64、RTX 2080 Ti、驱动 616.64 和 Rust 1.99.0 release 构建，模型摘要与上文相同。
+本节保留此前对 `gl`、`gles`、`dx`、`wgpu`、`opencl` 固定参数特化的单独对照，本轮没有重测特化前版本。这些数值不是上方主表的测量结果，也不包含 Vulkan 改动。历史对照使用 Windows x64、RTX 2080 Ti、驱动 616.64 和 Rust 1.99.0 release 构建，模型摘要与上文相同。
 
 通过临时程序直接调用五个库，输入与 `anr-bench::synthetic_input` 一致。每个后端串行运行三轮，每轮重新构造实例，强度 80，预热 100 帧后继续测量 1000 次单帧同步 `run`，不 reset。下表取三轮平均每帧耗时的中位数；降幅以未舍入数值计算。OpenCL 一行使用预处理分支修正后的单独三轮复测，其余条目使用此前的五后端对照。未隔离其他系统负载或清空驱动缓存，没有置信区间，不能据此保证其他设备或实时音频性能。GLES/wgpu 仍没有 `anr-bench` 命令行入口。
 
@@ -55,13 +58,13 @@
 
 ## 当前工具的后端范围
 
-`tensorrt` 是独立的原生实现：两个 TensorRT 神经网络 engine 与 CUDA DSP/FFT 组成整帧执行路径，不经过 ORT。`ort-tensorrt` 则由 ONNX Runtime 的 TensorRT execution provider 执行，并允许 ORT 将不支持或按其分配规则更适合 CPU 的算子放到 CPU。它只显式注册 TensorRT provider，不另加 CUDA provider；provider 注册失败仍是错误，不会重试整个 CPU Session。历史运行中出现部分算子不受 TensorRT 支持的诊断，但该行已完成测量，不能据此称其为全 GPU 执行。
+`tensorrt` 是独立的原生实现：两个 TensorRT 神经网络 engine 与 CUDA DSP/FFT 组成整帧执行路径，不经过 ORT。`ort-tensorrt` 则由 ONNX Runtime 的 TensorRT execution provider 执行，并允许 ORT 将不支持或按其分配规则更适合 CPU 的算子放到 CPU。它只显式注册 TensorRT provider，不另加 CUDA provider；provider 注册失败仍是错误，不会重试整个 CPU Session。本轮该项初始化期间输出 `/MatMul_FusedMatMulAndScale` 的 reshape/shape 解析错误：无法将 `[481,1,2]` reshape 为 `[1,2]`；随后仍完成全部预热与测量，报告 `status: ok`。本轮未采集实际 CPU 算子清单，不能将该行解读为全 GPU 执行。
 
 三个 `ort-*` 条目的耗时都包含适用的 CPU 算子及设备间传输。它们共用一个进程级 ORT Environment；因此后续 ORT 条目的准备时间不再包含首次创建该 Environment 的开销。Session 使用单线程算子执行、顺序执行和独立线程池，关闭线程池 spinning；DirectML 另关闭 memory pattern。这些配置是本工具的测量条件，不是对其他 ORT 应用的默认性能判断。
 
-`openvino` 行明确选择 CPU，运行于 Ryzen 7 5800X；它不是 OpenVINO GPU 结果，也不是 GPU 失败后的 CPU 回退。历史记录中 OpenVINO GPU 编译未成功，NPU 未测。当前工具有 `--openvino-device CPU|GPU|GPU.n|NPU` 入口，但设备插件、硬件与模型算子仍须兼容，CPU 结果不证明 GPU/NPU 可运行。
+`openvino` 行明确选择 CPU，运行于 Ryzen 7 5800X，JSON 中的 `execution_device` 也为 `CPU`；它不是 OpenVINO GPU 结果，也不是 GPU 失败后的 CPU 回退。本轮未测 OpenVINO GPU/NPU。当前工具有 `--openvino-device CPU|GPU|GPU.n|NPU` 入口，但设备插件、硬件与模型算子仍须兼容，CPU 结果不证明 GPU/NPU 可运行。
 
-当前 `anr-bench` 的 `--backend` 枚举仅包含表中的十项。GLES、wgpu、ORT CPU、CoreML 和 XNNPACK 没有本工具的测量入口，也没有本报告中的结果；这不等于库或 CLI 不支持这些后端。工具默认编入 `gl`、`vk`、`dx`、`cuda`、`opencl`，默认只选择 `gl,vk,dx`。原生 TensorRT、OpenVINO 和三个 ORT provider 需要各自的 feature。
+当前 `anr-bench` 的 `--backend` 枚举仅包含主表中的十项，本轮已全部测量。GLES、wgpu、ORT CPU、CoreML 和 XNNPACK 没有本工具的测量入口，本轮未测；GLES/wgpu 的历史数据仅见上节。这不等于库或 CLI 不支持这些后端。工具始终编入 `gl`、`vk`、`dx`、`cuda`、`opencl`，默认只选择 `gl,vk,dx`。原生 TensorRT、OpenVINO 和三个 ORT provider 需要各自的 feature。
 
 ## 安装工具
 
@@ -72,7 +75,7 @@ cargo install anr-bench --version 0.3.0 --locked
 anr-bench --model /absolute/path/to/dfn3.onnx --backend vk --warmup 100 --frames 1000 --strength 80 --json
 ```
 
-将模型路径换为自己的文件；此例需要 Windows/Linux 的硬件 Vulkan。已安装的工具可在任意目录运行，模型相对路径以当前工作目录为准。默认编入的后端、可选 features、自备运行库及 SDK 配置见 [独立使用指南](https://crates.io/crates/anr-bench/0.3.0)。下方保留的是源码 checkout 的完整十后端复现流程，不是默认安装就能运行的配置。
+将模型路径换为自己的文件；此例需要 Windows/Linux 的硬件 Vulkan。已安装的工具可在任意目录运行，模型相对路径以当前工作目录为准。始终编入的后端、可选 features、自备运行库及 SDK 配置见 [独立使用指南](https://crates.io/crates/anr-bench/0.3.0)。下方是本轮源码 checkout 的完整十后端复现流程，不是默认安装就能运行的配置。
 
 ## 复现
 
@@ -86,17 +89,27 @@ anr-bench --model /absolute/path/to/dfn3.onnx --backend vk --warmup 100 --frames
 - ORT provider features 不安装 GPU 驱动、CUDA、cuDNN 或 TensorRT。以下命令通过 `ort-download-binaries` 下载匹配的 ONNX Runtime 分发包，仍须提供相容的厂商运行库。core runtime 与 provider DLL 必须来自同一分发版本，不要混用其他构建目录遗留的 DLL。
 - TensorRT/OpenVINO 的构建脚本编译私有 shared shim；本地 Cargo 构建可以从记录的 `OUT_DIR` 加载。厂商运行库及其依赖必须可被加载，CUDA NVRTC/builtins 和 ORT GPU 依赖需位于适用的 DLL 搜索路径。独立分发时还要部署 shim、OpenVINO frontend/plugin 和相应运行库；详见 [库配置与部署](crates/anr/README.md) 和 [ORT 配置](crates/anr-ort/README.md)。
 
-`anr-bench` 不自动下载模型。先准备 `models/dfn3.onnx`，核对上面的 SHA-256；模型来源见 [模型说明](.github/models/NOTICE.md)。以下 SDK 路径仅为示例，须替换为实际安装目录，并配置匹配运行库的 DLL 搜索路径，再从仓库根目录运行：
+`anr-bench` 不自动下载模型。先准备 `models/dfn3.onnx`，核对上面的 SHA-256；模型来源见 [模型说明](.github/models/NOTICE.md)。以下路径为本机实测配置，其他机器须替换为自己的 SDK/运行库安装目录，再从仓库根目录运行。构建与执行分开，Cargo 编译不计入准备时间：
 
 ```powershell
-$env:TENSORRT_ROOT = 'C:\SDKs\TensorRT-10.16.1'
+$env:TENSORRT_ROOT = 'F:\Program Files\TensorRT-10.16.1.11'
 $env:CUDA_ROOT = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3'
-$env:OPENVINO_ROOT = 'C:\SDKs\openvino'
+$env:OPENVINO_ROOT = 'E:\cache\anr-native-sdk\Lib\site-packages\openvino'
+$env:PATH = @(
+  "$env:CUDA_ROOT\bin\x64"
+  "$env:CUDA_ROOT\bin"
+  "$env:TENSORRT_ROOT\bin"
+  "$env:OPENVINO_ROOT\libs"
+  'C:\Program Files\NVIDIA\CUDNN\v9.26\bin\13.4\x64'
+  $env:PATH
+) -join ';'
 
-cargo run --locked --release `
+cargo build --locked --release `
   --target-dir target/benchmark-ort-gpu `
   -p anr-bench `
-  --features "tensorrt,openvino,ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml" -- `
+  --features "tensorrt,openvino,ort-download-binaries,ort-cuda,ort-tensorrt,ort-directml"
+
+& .\target\benchmark-ort-gpu\release\anr-bench.exe `
   --model models/dfn3.onnx `
   --backend "gl,vk,dx,cuda,tensorrt,openvino,opencl,ort-cuda,ort-tensorrt,ort-directml" `
   --openvino-device CPU `
